@@ -22,6 +22,12 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY alembic.ini ./
 COPY alembic ./alembic
+
+# The committed snapshot, so `source=fixture` works in a deployed container
+# without reaching out to pokeapi.co. Copied before the application code
+# because it changes rarely and should not be re-layered on every edit.
+COPY fixtures ./fixtures
+
 COPY api ./api
 
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
