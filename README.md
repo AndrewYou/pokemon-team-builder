@@ -52,6 +52,43 @@ cd api && uv run ruff check . && uv run mypy api tests && uv run pytest
 cd web && npm run build
 ```
 
+## Seeding
+
+```bash
+make migrate     # apply Alembic migrations first
+make seed        # from the committed fixture, offline (default)
+make seed-live   # from pokeapi.co: ~2,300 rate-limited requests, minutes
+make fixture     # regenerate fixtures/pokeapi-snapshot.json from pokeapi.co
+```
+
+`make seed` is the fixture path on purpose, so a stray invocation can never
+hammer PokeAPI. Seeding is idempotent: every write is an upsert keyed on the
+natural primary key, so re-running converges instead of duplicating.
+
+Both targets write to whatever `DATABASE_URL` names, including production if
+that is what `api/.env` holds. Prefix with an explicit URL when in doubt:
+
+```bash
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/pokemon make seed
+```
+
+### Fixture payloads are trimmed
+
+A faithful copy of every payload would be roughly 400 MB, over 90% of it
+`version_group_details` -- per-move, per-game learn data we never read. The
+snapshot stores only the fields this project persists, which brings it to about
+20 MB. The trim is idempotent and a test asserts that seeding from the fixture
+produces byte-identical rows to seeding live. The tradeoff is real: `raw` can
+only backfill columns derivable from what survived the trim.
+
+### Failures are never silent
+
+A seed that quietly dropped a third of its movepools would look exactly like a
+successful one until the counter-team endpoint had nothing to choose from. Fetch
+failures and per-record normalisation errors are collected, printed in full, and
+turned into a non-zero exit code. The fixture writer goes further and refuses to
+write a partial snapshot at all.
+
 ## Environment
 
 | Service | Variable | Notes |

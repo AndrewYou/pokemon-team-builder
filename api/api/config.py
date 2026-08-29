@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     # or Authorization headers cross this boundary, so there is nothing to protect.
     cors_origins: str = Field(default="*", description="Comma-separated allowed origins.")
 
+    # Defaults to the fixture so that running the seed can never accidentally
+    # hammer PokeAPI. Going live has to be an explicit choice.
+    pokeapi_source: str = Field(default="fixture", description="'fixture' or 'live'.")
+    pokeapi_base_url: str = Field(default="https://pokeapi.co/api/v2")
+    pokeapi_concurrency: int = Field(default=5, description="Max requests in flight.")
+    pokeapi_batch_delay: float = Field(default=0.5, description="Seconds between batches.")
+    # Overridable so the failure paths can be exercised against a crafted snapshot.
+    pokeapi_fixture_path: str = Field(default="", description="Override fixture location.")
+
     @property
     def async_database_url(self) -> str:
         return normalize_asyncpg_url(self.database_url)[0]
