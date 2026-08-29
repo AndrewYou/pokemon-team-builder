@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 from sqlalchemy import func, select
@@ -21,6 +22,8 @@ from api.schemas import (
     DeriveTypesResponse,
     TypeChartHealth,
 )
+
+logger = logging.getLogger(__name__)
 
 EXPECTED_ROWS = normalize.EXPECTED_TYPE_CHART_ROWS
 
@@ -57,9 +60,15 @@ async def derive_type_chart(session: AsyncSession, source_name: str) -> DeriveTy
     )
     await session.commit()
 
-    # Reference data changed underneath the derived layer, so it must not be
-    # served from the old copy.
-    registry.invalidate()
+    # The chart changed underneath the derived layer, so every defensive vector
+    # computed from it is now wrong. Rebuild immediately rather than leaving the
+    # cache invalid and the endpoints answering 503 until someone notices.
+    try:
+        await registry.rebuild(session)
+    except Exception:
+        # Unbuilt is recoverable and says so; stale is silently wrong.
+        registry.invalidate()
+        logger.exception("Derived cache rebuild failed after deriving the type chart")
 
     return DeriveTypesResponse(
         source=source_name,

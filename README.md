@@ -99,6 +99,23 @@ GET  /admin/debug/vector/6   all 18 multipliers for one Pokemon
 `GET /admin/stats` reports the chart's multiplier distribution and an
 `all_values_legal` flag, so the health of this whole phase is one call.
 
+### The cache refreshes itself
+
+Nothing routine requires calling `/admin/cache/rebuild`. It is rebuilt at
+startup, so a deploy needs no intervention, and both writers of reference data
+-- the seed job and `derive-types` -- rebuild it after they finish. The endpoint
+remains as a manual escape hatch.
+
+This matters because a stale derived layer does not fail, it answers
+confidently wrong. Defensive vectors are precomputed, while the debug endpoints
+read a Pokemon's types live from the database, so a Pokemon whose typing changed
+reports its new types beside its old multipliers in the same response: types
+`[fire, flying]` with `ground: 2.0`, describing a flying type that is not immune
+to ground.
+
+If a rebuild fails, the cache is invalidated rather than left in place. Unbuilt
+answers 503 naming the call that fixes it; stale is silently wrong.
+
 ### Single worker, by design
 
 The cache is a module-level singleton in process memory. Under multiple uvicorn

@@ -8,6 +8,7 @@ the demo surface is a browser and there is no terminal to watch.
 from __future__ import annotations
 
 import datetime
+import logging
 import traceback
 import uuid
 from typing import Any
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.db import SessionLocal
+from api.derived import registry
 from api.ingest.client import RateLimitedClient
 from api.ingest.seed import seed
 from api.ingest.sources import build_source
@@ -56,6 +58,9 @@ _COUNTED_MODELS = (
     ChangeAck,
     Job,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class JobAlreadyRunning(Exception):
@@ -146,6 +151,21 @@ async def run_seed_job(job_id: uuid.UUID, source_name: str) -> None:
             error=traceback.format_exc(),
         )
         return
+
+    # Reference data just changed, so the derived layer describes the old data.
+    # Rebuilding here rather than leaving it to the operator: the defensive
+    # vectors are precomputed, so a stale cache does not fail, it answers
+    # confidently wrong -- a Pokemon whose types changed keeps its old
+    # multipliers while reporting its new types in the same response.
+    await progress("rebuilding derived cache")
+    try:
+        async with SessionLocal() as session:
+            await registry.rebuild(session)
+    except Exception:
+        # Never leave a stale cache serving. Unbuilt answers 503 with
+        # instructions, which is recoverable; stale is silently wrong.
+        registry.invalidate()
+        logger.exception("Derived cache rebuild failed after seed")
 
     if report.ok:
         await _set_job(
