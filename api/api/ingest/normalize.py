@@ -111,6 +111,11 @@ def trim_type(payload: dict[str, Any]) -> dict[str, Any]:
 
     A full type payload is ~35 KB, almost all of it the list of every Pokemon
     and move of that type. The chart only needs the damage relations.
+
+    `past_damage_relations` is dropped deliberately, not incidentally. It holds
+    superseded generation-specific charts -- Gen 1 had bug 2x into poison, ice
+    1x into fire, ghost 0x into psychic -- and reading it would produce a chart
+    that silently disagrees with the modern one.
     """
     return {
         "id": payload["id"],
@@ -236,6 +241,56 @@ def pokemon_ability_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return list(seen.values())
 
 
+# The chart is a known quantity, so the derivation checks its own work. These
+# counts are the current (Gen 6+) chart, confirmed against pokemondb.net/type.
+EXPECTED_TYPE_CHART_ROWS = len(CANONICAL_TYPES) ** 2
+EXPECTED_MULTIPLIER_DISTRIBUTION: dict[str, int] = {"0": 8, "0.5": 61, "1": 204, "2": 51}
+
+
+class TypeChartValidationError(ValueError):
+    """The derived chart does not match the known-good shape."""
+
+
+def format_multiplier(value: Decimal | float) -> str:
+    """Stable string key for a multiplier: 0.5 stays '0.5', 1.0 becomes '1'."""
+    return f"{float(value):g}"
+
+
+def multiplier_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """How many pairings landed on each multiplier, ordered by value."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        key = format_multiplier(row["multiplier"])
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: float(item[0])))
+
+
+def validate_type_chart(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Fail loudly unless the chart is exactly the one we expect.
+
+    A chart that is merely plausible is the worst outcome here: every damage
+    number downstream would be wrong in a way no test of *this* code would
+    catch. The two ways to get a plausible-but-wrong chart are reading
+    `past_damage_relations` instead of `damage_relations`, and failing to
+    filter out the non-battle types, so both are caught by the counts.
+    """
+    distribution = multiplier_distribution(rows)
+    if len(rows) != EXPECTED_TYPE_CHART_ROWS:
+        raise TypeChartValidationError(
+            f"expected {EXPECTED_TYPE_CHART_ROWS} rows "
+            f"({len(CANONICAL_TYPES)} attacking x {len(CANONICAL_TYPES)} defending), "
+            f"built {len(rows)}. Check that non-battle types "
+            f"(unknown, shadow, stellar) were filtered out."
+        )
+    if distribution != EXPECTED_MULTIPLIER_DISTRIBUTION:
+        raise TypeChartValidationError(
+            f"multiplier distribution {distribution} does not match the known chart "
+            f"{EXPECTED_MULTIPLIER_DISTRIBUTION}. A mismatch usually means "
+            f"past_damage_relations was read instead of damage_relations."
+        )
+    return distribution
+
+
 def type_chart_rows(type_payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Build the full 18x18 effectiveness matrix.
 
@@ -243,11 +298,22 @@ def type_chart_rows(type_payloads: list[dict[str, Any]]) -> list[dict[str, Any]]
     and a lookup never has to handle a missing combination.
     """
     canonical = set(CANONICAL_TYPES)
+    # `damage_relations`, never `past_damage_relations`. The latter holds
+    # superseded generation-specific charts and would produce a chart that
+    # disagrees with the modern one without failing anywhere obvious.
+    #
+    # Filtering on the 18-name allowlist rather than on "types that have
+    # pokemon": the stored payloads are trimmed and no longer carry a pokemon
+    # list, and the allowlist also excludes `stellar`, which is a real Gen 9
+    # type entry that a two-name unknown/shadow filter would let through.
     relations = {
         payload["name"]: payload["damage_relations"]
         for payload in type_payloads
         if payload["name"] in canonical
     }
+    missing = canonical - set(relations)
+    if missing:
+        raise TypeChartValidationError(f"missing damage_relations for types: {sorted(missing)}")
 
     rows: list[dict[str, Any]] = []
     for attacking in CANONICAL_TYPES:

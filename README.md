@@ -111,6 +111,25 @@ Scaling out would mean giving up the pure in-memory approach: write a version
 stamp in Postgres when reference data changes and have each worker re-check it
 on a cheap interval, rebuilding when it moves.
 
+### The chart checks its own work
+
+Both write paths -- the seed and `POST /admin/derive-types` -- assert the result
+is exactly the known chart before storing it: 324 rows with the distribution
+`0 -> 8, 0.5 -> 61, 1 -> 204, 2 -> 51`, confirmed against pokemondb.net/type.
+
+A merely plausible chart is the worst outcome here, because every damage number
+downstream would be wrong and nothing in the consuming code would notice. The
+two realistic ways to produce one are guarded explicitly:
+
+- **`damage_relations`, never `past_damage_relations`.** The latter holds
+  superseded generation-specific charts (Gen 1 had bug 2x into poison, ice 1x
+  into fire, ghost 0x into psychic). It is dropped at trim time so it cannot be
+  read by accident, and flipping even one relation moves the distribution and
+  fails the assertion.
+- **Non-battle types are filtered by an 18-name allowlist.** `/type` returns 21
+  entries, not 18: `unknown` (10001), `shadow` (10002), and `stellar` (id 19,
+  added in Gen 9). Excluding only the first two leaves 19 types and 361 rows.
+
 ### An incomplete chart refuses to serve
 
 `build_chart` fills unlisted pairings with 1.0, which is right when PokeAPI

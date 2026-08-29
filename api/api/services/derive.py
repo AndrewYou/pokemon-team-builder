@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections import Counter
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -23,12 +22,7 @@ from api.schemas import (
     TypeChartHealth,
 )
 
-EXPECTED_ROWS = len(normalize.CANONICAL_TYPES) ** 2
-
-
-def _format_multiplier(value: float) -> str:
-    """JSON object keys must be strings; 0.5 stays '0.5', 1.0 becomes '1'."""
-    return f"{value:g}"
+EXPECTED_ROWS = normalize.EXPECTED_TYPE_CHART_ROWS
 
 
 async def derive_type_chart(session: AsyncSession, source_name: str) -> DeriveTypesResponse:
@@ -49,10 +43,10 @@ async def derive_type_chart(session: AsyncSession, source_name: str) -> DeriveTy
         result = await build_source(source_name).fetch_types()
 
     rows = normalize.type_chart_rows(result.items)
-    if len(rows) != EXPECTED_ROWS:
-        # A short chart means a type failed to parse. Storing it would produce
-        # quietly wrong effectiveness rather than an obvious failure.
-        raise ValueError(f"expected {EXPECTED_ROWS} rows, built {len(rows)}")
+    # Asserts both the 324-row count and the exact multiplier distribution,
+    # raising TypeChartValidationError rather than writing a plausible-but-wrong
+    # chart that nothing downstream would flag.
+    distribution = normalize.validate_type_chart(rows)
 
     statement = insert(TypeChart).values(rows)
     await session.execute(
@@ -67,11 +61,10 @@ async def derive_type_chart(session: AsyncSession, source_name: str) -> DeriveTy
     # served from the old copy.
     registry.invalidate()
 
-    distribution = Counter(_format_multiplier(float(row["multiplier"])) for row in rows)
     return DeriveTypesResponse(
         source=source_name,
         rows_written=len(rows),
-        multiplier_distribution=dict(sorted(distribution.items(), key=lambda kv: float(kv[0]))),
+        multiplier_distribution=distribution,
         all_values_legal=all(float(row["multiplier"]) in LEGAL_CHART_VALUES for row in rows),
     )
 
@@ -84,7 +77,7 @@ async def type_chart_health(session: AsyncSession) -> TypeChartHealth:
         )
     ).all()
 
-    distribution = {_format_multiplier(float(value)): int(count) for value, count in rows}
+    distribution = {normalize.format_multiplier(float(value)): int(count) for value, count in rows}
     total = sum(distribution.values())
     return TypeChartHealth(
         rows=total,

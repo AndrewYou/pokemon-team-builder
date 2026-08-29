@@ -44,8 +44,6 @@ from api.models import (
 # stay comfortably inside the limit.
 _MAX_BIND_PARAMS = 30_000
 
-EXPECTED_TYPE_CHART_ROWS = len(normalize.CANONICAL_TYPES) ** 2
-
 # Called with a short phase description so a caller -- the admin job runner --
 # can surface progress. A multi-minute job that reports nothing is
 # indistinguishable from a hung one.
@@ -147,14 +145,11 @@ async def seed(source: PokemonSource, on_progress: ProgressCallback | None = Non
     pokemon: FetchResult = await source.fetch_pokemon()
     report.fetch_failures = [*types.failures, *moves.failures, *pokemon.failures]
 
-    # The 18x18 chart is an invariant, not a best effort. A short chart means a
-    # type failed to fetch, and silently storing 289 rows would produce wrong
-    # effectiveness answers rather than an obvious error.
+    # The chart is an invariant, not a best effort: both its size and its exact
+    # multiplier distribution are checked. Storing a merely plausible chart
+    # would make every downstream damage number quietly wrong.
     type_rows = normalize.type_chart_rows(types.items)
-    if len(type_rows) != EXPECTED_TYPE_CHART_ROWS:
-        raise RuntimeError(
-            f"type chart has {len(type_rows)} rows, expected {EXPECTED_TYPE_CHART_ROWS}"
-        )
+    normalize.validate_type_chart(type_rows)
 
     await progress("normalising")
     move_rows = _normalise_many(moves.items, "move", normalize.move_row, report.record_errors)
