@@ -816,3 +816,245 @@ class ExplainResponse(BaseModel):
             }
         }
     )
+
+
+# --- Sync -------------------------------------------------------------------
+
+
+class SyncRunRead(BaseModel):
+    """One execution of the change-detection job.
+
+    A run that scanned every record and found nothing is as important as one
+    that found something: it is the evidence the detector is not inventing
+    changes.
+    """
+
+    id: int
+    source: str = Field(description="live, fixture, or stale.")
+    status: str
+    records_scanned: int
+    changes_found: int
+    started_at: datetime.datetime
+    finished_at: datetime.datetime | None = None
+    duration_ms: float | None = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "summary": "A run that found nothing",
+                    "description": (
+                        "Every record checked, no divergence. This is the normal "
+                        "outcome and the proof the detector is not noisy."
+                    ),
+                    "value": {
+                        "id": 12,
+                        "source": "fixture",
+                        "status": "succeeded",
+                        "records_scanned": 1025,
+                        "changes_found": 0,
+                        "started_at": "2026-08-29T14:00:00Z",
+                        "finished_at": "2026-08-29T14:00:09Z",
+                        "duration_ms": 9120.0,
+                    },
+                },
+                {
+                    "summary": "A run that detected changes",
+                    "description": "Five discrete field changes across two Pokemon.",
+                    "value": {
+                        "id": 13,
+                        "source": "fixture",
+                        "status": "succeeded",
+                        "records_scanned": 1025,
+                        "changes_found": 5,
+                        "started_at": "2026-08-29T14:05:00Z",
+                        "finished_at": "2026-08-29T14:05:10Z",
+                        "duration_ms": 10230.0,
+                    },
+                },
+            ]
+        }
+    )
+
+
+class ChangeRead(BaseModel):
+    """One detected field-level change, rendered for a human."""
+
+    id: int
+    sync_run_id: int
+    entity_type: str
+    entity_id: str
+    pokemon_name: str | None = None
+    field_path: str
+    old_value: str | None = Field(description="What our snapshot held before the sync.")
+    new_value: str | None = Field(description="What upstream reports now.")
+    message: str = Field(description="The alert text a user sees.")
+    detected_at: datetime.datetime
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": 41,
+                "sync_run_id": 13,
+                "entity_type": "pokemon",
+                "entity_id": "25",
+                "pokemon_name": "pikachu",
+                "field_path": "stats.attack",
+                "old_value": "71",
+                "new_value": "55",
+                "message": "Pikachu's Attack changed from 71 to 55",
+                "detected_at": "2026-08-29T14:05:08Z",
+            }
+        }
+    )
+
+
+class DriftEntry(BaseModel):
+    """A stored row that no longer matches the reference snapshot."""
+
+    pokemon_id: int
+    name: str
+    sections: list[str] = Field(description="Which section hashes disagree.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"pokemon_id": 25, "name": "pikachu", "sections": ["stats", "types"]}
+        }
+    )
+
+
+class DriftResponse(BaseModel):
+    """What a sync would find if it ran right now."""
+
+    reference: str = Field(description="What the stored rows were compared against.")
+    checked: int
+    drifted: int
+    entries: list[DriftEntry]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "reference": "fixture",
+                "checked": 1025,
+                "drifted": 2,
+                "entries": [
+                    {"pokemon_id": 25, "name": "pikachu", "sections": ["stats", "types"]},
+                    {"pokemon_id": 6, "name": "charizard", "sections": ["sprite"]},
+                ],
+            }
+        }
+    )
+
+
+class SimulateChangeRequest(BaseModel):
+    """Which divergences to introduce. Every field is optional."""
+
+    pokemon_ids: list[int] | None = Field(
+        default=None, description="Omit to pick `count` Pokemon at random."
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        description=(
+            "Any of stats, types, sprite, moves. Omit for one random group per "
+            "Pokemon. List several and EVERY listed group is mutated on EVERY "
+            "named Pokemon."
+        ),
+    )
+    mutations_per_field: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Discrete changes within each group, drawn without replacement. "
+            "Clamped to the group's maximum (stats 6, types 2, sprite 1, moves 5) "
+            "rather than rejected."
+        ),
+    )
+    count: int = Field(default=3, ge=1, le=25, description="Used only when pokemon_ids is omitted.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "pokemon_ids": [25, 6],
+                "fields": ["stats", "types", "sprite"],
+                "mutations_per_field": 2,
+                "count": 3,
+            }
+        }
+    )
+
+
+class SimulatedMutation(BaseModel):
+    """One discrete divergence, which becomes exactly one data_change row."""
+
+    field_path: str = Field(description="The path the change will appear under.")
+    section: str
+    upstream_value: Any = Field(description="The true value, which the sync will restore.")
+    mutated_to: Any = Field(description="What our snapshot now holds.")
+    expect_alert: str = Field(
+        description="The exact alert text the next sync should produce, for comparing "
+        "against the UI verbatim."
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "field_path": "stats.attack",
+                "section": "stats",
+                "upstream_value": 55,
+                "mutated_to": 71,
+                "expect_alert": "Pikachu's Attack changed from 71 to 55",
+            }
+        }
+    )
+
+
+class SimulatedPokemon(BaseModel):
+    """Everything done to one Pokemon."""
+
+    pokemon_id: int
+    name: str
+    sections_touched: list[str]
+    mutations: list[SimulatedMutation]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "pokemon_id": 25,
+                "name": "pikachu",
+                "sections_touched": ["stats", "types"],
+                "mutations": [
+                    {
+                        "field_path": "stats.attack",
+                        "section": "stats",
+                        "upstream_value": 55,
+                        "mutated_to": 71,
+                        "expect_alert": "Pikachu's Attack changed from 71 to 55",
+                    }
+                ],
+            }
+        }
+    )
+
+
+class SimulateChangeResponse(BaseModel):
+    """What was diverged, and what the next sync should report."""
+
+    total_mutations: int = Field(
+        description="Exactly how many data_change rows the next sync must produce."
+    )
+    affected_pokemon: int
+    mutations_per_field_effective: dict[str, int] = Field(
+        description="The requested count after clamping to each group's maximum."
+    )
+    by_pokemon: list[SimulatedPokemon]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "total_mutations": 10,
+                "affected_pokemon": 2,
+                "mutations_per_field_effective": {"stats": 2, "types": 2, "sprite": 1},
+                "by_pokemon": [],
+            }
+        }
+    )

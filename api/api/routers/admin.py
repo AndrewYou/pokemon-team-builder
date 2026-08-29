@@ -16,13 +16,18 @@ from api.derived.typechart import TYPE_INDEX, defensive_multiplier, explain, mat
 from api.models import JobKind
 from api.schemas import (
     CacheRebuildResponse,
+    ChangeRead,
     DeriveTypesResponse,
     DeterminismCheckResponse,
+    DriftResponse,
+    ErrorResponse,
     ExplainResponse,
     JobAccepted,
     JobRead,
     MatchupResponse,
     NormalizeDebugResponse,
+    SimulateChangeRequest,
+    SimulateChangeResponse,
     StatsResponse,
     TypeName,
     VectorResponse,
@@ -32,6 +37,7 @@ from api.services import derive as derive_service
 from api.services import explain as explain_service
 from api.services import jobs as job_service
 from api.services import normalization as normalization_service
+from api.services import sync_service
 
 router = APIRouter(
     prefix="/admin",
@@ -326,3 +332,75 @@ async def debug_explain(
         plan=plan,
         uses_index=any("Index Scan" in line or "Index Only Scan" in line for line in plan),
     )
+
+
+@router.get(
+    "/changes",
+    response_model=list[ChangeRead],
+    summary="Recent detected changes",
+    description=(
+        "Field-level changes found by past syncs, newest first, rendered as the "
+        "sentences a user would see.\n\n"
+        "`old_value` is what our snapshot held before the sync and `new_value` is "
+        "what upstream reports now."
+    ),
+)
+async def list_changes(
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> list[ChangeRead]:
+    return await sync_service.list_changes(session, limit)
+
+
+@router.get(
+    "/drift",
+    response_model=DriftResponse,
+    summary="What a sync would find right now",
+    description=(
+        "Stored rows whose section hashes no longer match the reference snapshot, "
+        "so you can see what is outstanding before running a sync.\n\n"
+        "Compared against the committed fixture rather than a live fetch, which "
+        "keeps this a fast read instead of a few thousand HTTP requests.\n\n"
+        "There is no reset endpoint because none is needed: a sync restores the "
+        "true upstream values, so running one clears the drift."
+    ),
+)
+async def get_drift(session: SessionDep) -> DriftResponse:
+    return await sync_service.drift(session)
+
+
+@router.post(
+    "/simulate-change",
+    response_model=SimulateChangeResponse,
+    summary="Diverge our snapshot so detection is demonstrable",
+    description=(
+        "**This mutates OUR SNAPSHOT, not PokeAPI.** Upstream is read-only to us "
+        "and is untouched. This edits the copy in our own database so the next "
+        "sync has something real to find.\n\n"
+        "**Note the inversion.** If a Pokemon's Attack is 55 upstream and this "
+        "changes our copy to 71, the sync sees 71 -> 55: `old_value` is what we "
+        "mutated to and `new_value` is the true upstream value. This catches "
+        "people out every time.\n\n"
+        "Every field is optional. Omit `pokemon_ids` to pick `count` at random; "
+        "omit `fields` for one random group each. Listing several fields mutates "
+        "**every** listed group on **every** named Pokemon, so "
+        '`["stats","types","sprite"]` on 2 Pokemon with '
+        "`mutations_per_field: 2` yields 2 stat + 2 type + 1 sprite changes each "
+        "(sprite has a single value, so it caps at 1) -- 10 in total.\n\n"
+        "Each discrete change becomes its own `data_change` row, so "
+        "`total_mutations` is exactly what `GET /admin/changes` returns after the "
+        "next sync. `expect_alert` is the literal alert text to compare against "
+        "the UI.\n\n"
+        "No reset endpoint is needed: the sync restores the true values."
+    ),
+    responses={422: {"model": ErrorResponse, "description": "Unknown Pokemon ids."}},
+)
+async def simulate_change(
+    payload: SimulateChangeRequest, session: SessionDep
+) -> SimulateChangeResponse:
+    try:
+        return await sync_service.simulate_change(session, payload)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc

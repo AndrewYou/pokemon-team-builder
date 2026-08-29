@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     # a crawl. Defaults are intentionally published so a reviewer can log in.
     admin_username: str = Field(default="admin", description="HTTP Basic user for /admin.")
     admin_password: str = Field(default="pokemon", description="HTTP Basic password.")
+    # Alternative credential for scheduled callers, which cannot answer a
+    # browser password prompt. Empty disables it entirely rather than
+    # accepting an empty secret.
+    cron_secret: str = Field(default="", description="Shared secret for X-Cron-Secret.")
 
     @property
     def async_database_url(self) -> str:

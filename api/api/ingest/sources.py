@@ -117,6 +117,29 @@ class FixtureSource:
         return FetchResult(items=self._load()["types"])
 
 
+class StaleSource:
+    """Replays payloads we already hold as if they were upstream.
+
+    Used when a live fetch is unavailable, and useful on its own: a sync
+    against our own snapshot must find exactly zero changes, which is the
+    cheapest way to demonstrate the detector is not inventing them.
+    """
+
+    name = "stale"
+
+    def __init__(self, pokemon: list[dict[str, Any]]) -> None:
+        self._pokemon = pokemon
+
+    async def fetch_pokemon(self) -> FetchResult:
+        return FetchResult(items=self._pokemon)
+
+    async def fetch_moves(self) -> FetchResult:
+        return FetchResult(items=[])
+
+    async def fetch_types(self) -> FetchResult:
+        return FetchResult(items=[])
+
+
 def build_source(name: str | None = None, client: RateLimitedClient | None = None) -> PokemonSource:
     """Select a source by name, defaulting to the POKEAPI_SOURCE env var.
 

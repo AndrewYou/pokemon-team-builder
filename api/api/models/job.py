@@ -38,6 +38,7 @@ class JobKind(enum.StrEnum):
     migration; this enum exists for callers, not for the column type."""
 
     seed = "seed"
+    sync = "sync"
 
 
 # The states in which a job still owns its kind. Used by the partial unique

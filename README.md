@@ -234,6 +234,52 @@ enemy would be a division by zero, so it scores one step above the best
 resistance. It is stateless and never touches the database -- the display fields
 it needs live in the derived cache.
 
+## The change-detection demo
+
+```bash
+cd api
+uv run python -m api.sync.run --source stale     # replays our own data: must find 0
+```
+
+Or from Swagger, in four calls:
+
+1. `GET /admin/drift` — nothing outstanding
+2. `POST /admin/simulate-change` with
+   `{"pokemon_ids":[25,6],"fields":["stats","types","sprite"],"mutations_per_field":2}`
+   — returns 10 mutations and the exact alert text each will produce
+3. `POST /admin/sync?source=fixture` — 202, poll the job
+4. `GET /admin/changes` — 10 rows whose messages match `expect_alert` verbatim
+
+`GET /sync-runs` is public and unauthenticated on purpose. A run recording 1025
+records scanned and **0 changes found** is the evidence that this detects
+changes rather than inventing them, and a reviewer should not need credentials
+to see it.
+
+### simulate-change mutates OUR snapshot
+
+It cannot touch PokeAPI; upstream is read-only to us. It edits our stored copy
+so the next sync has something real to find, and the sync then writes the true
+values back -- which is why there is no reset endpoint.
+
+**The inversion catches everyone.** If Attack is 55 upstream and we mutate our
+copy to 71, the sync reports 71 -> 55: `old_value` is what we mutated to,
+`new_value` is the truth.
+
+Two failure modes it is built to avoid. Mutating only the hash would leave the
+sync detecting a mismatch, diffing raw against upstream, finding nothing, and
+silently repairing the hash -- a false negative that looks like a broken
+detector. So the raw payload is what changes, and the row is rebuilt from it
+wholesale via `pokemon_row`, which is also why mutating stats and types together
+moves *both* section hashes: no hash is updated by hand, so none can be missed.
+
+### Sync
+
+Records are committed in batches, so a failure at record 800 keeps the first
+799 findings rather than rolling back a run that took minutes. `POST /admin/sync`
+accepts **either** HTTP Basic or an `X-Cron-Secret` header, because a scheduled
+job cannot answer a browser password prompt and a reviewer should not need a
+shared secret. A second concurrent sync returns 409.
+
 ## Normalisation and change detection
 
 `api/sync/` holds the projection, the section hashes, and the diff. It is the
