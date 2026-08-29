@@ -16,6 +16,10 @@ from alembic import context
 # Ensure `api` is importable regardless of the directory alembic is invoked from.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Importing the models package is what populates Base.metadata. Without it
+# autogenerate compares an empty metadata against the live database and emits a
+# migration that drops everything, or creates nothing at all.
+import api.models  # noqa: E402,F401
 from api.config import settings  # noqa: E402
 from api.db import Base  # noqa: E402
 

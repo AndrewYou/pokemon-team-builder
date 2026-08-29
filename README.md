@@ -27,8 +27,19 @@ cd web && cp .env.example .env && npm install && npm run dev   # :5173
 To run the API without Docker, start Postgres yourself and:
 
 ```bash
-cd api && cp .env.example .env && uv sync && uv run uvicorn api.main:app --reload
+cd api && cp .env.example .env && uv sync
+uv run alembic upgrade head
+uv run uvicorn api.main:app --reload
 ```
+
+Keep `api/.env` pointed at a local database. Alembic reads it, so a `.env`
+holding production credentials turns `alembic downgrade` into a production
+outage. Environment variables override `.env` if you need to target another
+database for a single command.
+
+The frontend serves the app at `/` and the connectivity check at `/health`;
+`vercel.json` adds the SPA rewrite that keeps a hard refresh on `/health` from
+404ing.
 
 `GET /health` runs `SELECT 1` and returns `{ok, db}`. It answers `200` even when
 the database is down, reporting the failure in the body, so the platform health
