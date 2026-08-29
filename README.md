@@ -126,9 +126,28 @@ two realistic ways to produce one are guarded explicitly:
   into fire, ghost 0x into psychic). It is dropped at trim time so it cannot be
   read by accident, and flipping even one relation moves the distribution and
   fails the assertion.
-- **Non-battle types are filtered by an 18-name allowlist.** `/type` returns 21
-  entries, not 18: `unknown` (10001), `shadow` (10002), and `stellar` (id 19,
-  added in Gen 9). Excluding only the first two leaves 19 types and 361 rows.
+- **The 18 battle types are allowlisted, not the extras blocklisted.** `/type`
+  already returns more than 18, and PokeAPI may add more. A blocklist breaks
+  silently the moment one appears: 19 types writes 361 rows and 20 writes 400,
+  both plausible-looking numbers. The allowlist is a module-level `frozenset`
+  whose length is asserted at import, so a new upstream entry needs no code
+  change to stay excluded.
+
+`stellar` is excluded on semantics rather than convenience: it is a Terastal
+mechanic, its effectiveness is special-cased against Terastallized Pokemon only,
+and no species carries it as `type1` or `type2` -- a claim a test checks against
+the committed snapshot rather than assuming.
+
+### Why the type list is both a tuple and a frozenset
+
+The `frozenset` is the allowlist, used for membership. The ordered tuple defines
+the column layout of every defensive vector and of `TYPE_INDEX`, and it follows
+PokeAPI type ids 1 through 18 so a column can be traced back to a real resource.
+
+The two cannot be collapsed. Python hash-randomises strings, so iterating a
+`frozenset` yields a different order in every process; deriving the column layout
+from it would make `vectors[:, 3]` mean a different type after each restart,
+silently invalidating every comparison. The ordering is pinned by a test.
 
 ### An incomplete chart refuses to serve
 

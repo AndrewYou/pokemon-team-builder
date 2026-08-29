@@ -154,3 +154,98 @@ class TestFormatting:
     )
     def test_multiplier_keys_are_stable(self, value: float, expected: str) -> None:
         assert normalize.format_multiplier(value) == expected
+
+
+class TestAllowlist:
+    """The 18 battle types are allowlisted, not the extras blocklisted.
+
+    A blocklist breaks silently the moment PokeAPI adds an entry: 19 types
+    writes 361 rows and 20 writes 400, and neither looks obviously wrong.
+    """
+
+    EXPECTED = frozenset(
+        {
+            "normal",
+            "fire",
+            "water",
+            "electric",
+            "grass",
+            "ice",
+            "fighting",
+            "poison",
+            "ground",
+            "flying",
+            "psychic",
+            "bug",
+            "rock",
+            "ghost",
+            "dragon",
+            "dark",
+            "steel",
+            "fairy",
+        }
+    )
+
+    def test_allowlist_is_a_frozenset(self) -> None:
+        assert isinstance(normalize.CANONICAL_TYPE_SET, frozenset)
+
+    def test_allowlist_contains_exactly_the_18_battle_types(self) -> None:
+        assert normalize.CANONICAL_TYPE_SET == self.EXPECTED
+
+    def test_there_are_exactly_18(self) -> None:
+        """Asserted at import too, so a typo fails at startup rather than
+        producing a chart that is quietly the wrong size."""
+        assert len(normalize.CANONICAL_TYPES) == 18
+        assert len(normalize.CANONICAL_TYPE_SET) == 18
+
+    def test_tuple_and_set_agree(self) -> None:
+        assert set(normalize.CANONICAL_TYPES) == normalize.CANONICAL_TYPE_SET
+
+    def test_a_type_added_tomorrow_needs_no_code_change(self) -> None:
+        """The real property an allowlist buys: an entry nobody has heard of is
+        excluded without anyone editing a blocklist."""
+        payloads = _payloads()
+        payloads.append({"id": 20, "name": "quantum", "damage_relations": _relations()})
+        rows = normalize.type_chart_rows(payloads)
+        assert len(rows) == 324
+        assert "quantum" not in {r["attacking_type"] for r in rows}
+
+
+class TestVectorColumnOrder:
+    """CANONICAL_TYPES is ordered because it defines the numpy column layout."""
+
+    def test_order_is_pokeapi_type_ids_1_to_18(self, type_payloads: list[dict[str, Any]]) -> None:
+        """Not an arbitrary order: it matches the upstream ids, so a column can
+        be traced back to a real resource."""
+        by_id = sorted((p for p in type_payloads if p["id"] <= 18), key=lambda p: p["id"])
+        assert tuple(p["name"] for p in by_id) == normalize.CANONICAL_TYPES
+
+    def test_type_index_is_built_from_the_ordered_tuple(self) -> None:
+        """If this were built from the frozenset, hash randomisation would give
+        each process a different column layout for the same data."""
+        from api.derived.typechart import TYPE_INDEX
+
+        assert list(TYPE_INDEX) == list(normalize.CANONICAL_TYPES)
+        assert TYPE_INDEX[normalize.CANONICAL_TYPES[0]] == 0
+        assert TYPE_INDEX[normalize.CANONICAL_TYPES[17]] == 17
+
+
+class TestStellarExclusion:
+    """Stellar is excluded on semantics, not convenience."""
+
+    def test_no_species_has_stellar_as_a_type(self) -> None:
+        """The justification, checked against the real snapshot: stellar is a
+        Terastal mechanic, so it never appears as type1 or type2 and has no
+        meaningful row in a defensive chart."""
+        snapshot = json.loads(FIXTURE.read_text())
+        used = {
+            entry["type"]["name"] for pokemon in snapshot["pokemon"] for entry in pokemon["types"]
+        }
+        assert "stellar" not in used
+        assert used <= normalize.CANONICAL_TYPE_SET
+
+    def test_stellar_is_present_upstream_but_excluded(
+        self, type_payloads: list[dict[str, Any]]
+    ) -> None:
+        assert "stellar" in {p["name"] for p in type_payloads}
+        assert "stellar" not in normalize.CANONICAL_TYPE_SET

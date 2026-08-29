@@ -22,6 +22,8 @@ LEGAL_CHART_VALUES = frozenset({0.0, 0.5, 1.0, 2.0})
 # one of these six. 4.0 and 0.25 only exist because of dual typing.
 LEGAL_DEFENSIVE_VALUES = frozenset({0.0, 0.25, 0.5, 1.0, 2.0, 4.0})
 
+# Built from the ordered tuple, never from the frozenset: this map is the
+# column layout of the defensive matrix and must be identical in every process.
 TYPE_INDEX: dict[str, int] = {name: index for index, name in enumerate(CANONICAL_TYPES)}
 
 

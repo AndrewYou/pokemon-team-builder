@@ -13,9 +13,25 @@ import json
 from decimal import Decimal
 from typing import Any
 
-# The 18 battle types. PokeAPI also serves `unknown`, `shadow`, and `stellar`,
-# which are not part of the effectiveness chart and would break the 18x18 = 324
-# invariant if they were included.
+# The 18 battle types, as an ALLOWLIST rather than a blocklist of the entries we
+# happen to know about. /type already returns more than 18 -- `unknown` (10001),
+# `shadow` (10002), and `stellar` (19) -- and PokeAPI may add others. Excluding
+# by name breaks silently the moment a new one appears: 19 types writes 361 rows
+# and 20 writes 400, both plausible-looking numbers that nothing would question.
+#
+# These 18 are a fixed fact about the games rather than something the API
+# defines, and the schema already assumes exactly 18.
+#
+# `stellar` is excluded on semantics, not convenience. It is a Terastal
+# mechanic: no species carries it as type1 or type2, and its effectiveness is
+# special-cased against Terastallized Pokemon only. It has no meaningful row or
+# column in a defensive chart.
+#
+# ORDER IS LOAD-BEARING. This tuple defines the column order of every defensive
+# vector and of TYPE_INDEX. It must not be replaced by iteration over the
+# frozenset below: Python hash-randomises strings, so set iteration order varies
+# between processes, and vectors[:, 3] would silently mean a different type on
+# every restart. The order here is PokeAPI type ids 1 through 18.
 CANONICAL_TYPES: tuple[str, ...] = (
     "normal",
     "fighting",
@@ -36,6 +52,15 @@ CANONICAL_TYPES: tuple[str, ...] = (
     "dark",
     "fairy",
 )
+
+# Membership tests use the frozenset; the vector layout uses the tuple above.
+CANONICAL_TYPE_SET: frozenset[str] = frozenset(CANONICAL_TYPES)
+
+# Checked at import so a typo or a duplicate is a startup failure rather than a
+# chart that is quietly the wrong size. A duplicate would keep the tuple at 18
+# while shrinking the set, so both are asserted.
+assert len(CANONICAL_TYPES) == 18, f"expected 18 battle types, got {len(CANONICAL_TYPES)}"
+assert len(CANONICAL_TYPE_SET) == 18, f"duplicate type name in CANONICAL_TYPES: {CANONICAL_TYPES}"
 
 _STAT_COLUMNS = {
     "hp": "base_hp",
@@ -297,21 +322,18 @@ def type_chart_rows(type_payloads: list[dict[str, Any]]) -> list[dict[str, Any]]
     Every pair is emitted, defaulting to 1x, so the table is exactly 324 rows
     and a lookup never has to handle a missing combination.
     """
-    canonical = set(CANONICAL_TYPES)
     # `damage_relations`, never `past_damage_relations`. The latter holds
     # superseded generation-specific charts and would produce a chart that
     # disagrees with the modern one without failing anywhere obvious.
     #
-    # Filtering on the 18-name allowlist rather than on "types that have
-    # pokemon": the stored payloads are trimmed and no longer carry a pokemon
-    # list, and the allowlist also excludes `stellar`, which is a real Gen 9
-    # type entry that a two-name unknown/shadow filter would let through.
+    # Anything outside the allowlist is dropped, whether or not we have heard of
+    # it. A type PokeAPI adds tomorrow needs no code change to stay excluded.
     relations = {
         payload["name"]: payload["damage_relations"]
         for payload in type_payloads
-        if payload["name"] in canonical
+        if payload["name"] in CANONICAL_TYPE_SET
     }
-    missing = canonical - set(relations)
+    missing = CANONICAL_TYPE_SET - set(relations)
     if missing:
         raise TypeChartValidationError(f"missing damage_relations for types: {sorted(missing)}")
 
