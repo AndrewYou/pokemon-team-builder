@@ -13,9 +13,12 @@ COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Dependencies resolve in their own layer so app edits do not bust the cache.
+# No --mount=type=cache here on purpose: Railway requires cache mount ids to be
+# prefixed with the service id, which would pin this image to one service. The
+# layer cache already covers the common case, since this step is skipped
+# entirely unless pyproject.toml or uv.lock actually change.
 COPY pyproject.toml uv.lock .python-version ./
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY alembic.ini ./
 COPY alembic ./alembic
