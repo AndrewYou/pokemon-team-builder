@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     # Overridable so the failure paths can be exercised against a crafted snapshot.
     pokeapi_fixture_path: str = Field(default="", description="Override fixture location.")
 
+    # Presentation hygiene, not a security boundary. The data is public and
+    # the app has no user auth; this only stops a stray click from kicking off
+    # a crawl. Defaults are intentionally published so a reviewer can log in.
+    admin_username: str = Field(default="admin", description="HTTP Basic user for /admin.")
+    admin_password: str = Field(default="pokemon", description="HTTP Basic password.")
+
     @property
     def async_database_url(self) -> str:
         return normalize_asyncpg_url(self.database_url)[0]

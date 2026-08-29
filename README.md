@@ -52,6 +52,30 @@ cd api && make check
 cd web && npm run build
 ```
 
+## Swagger is the demo surface
+
+`/` redirects to `/docs`. Everything is runnable from that page; no curl needed.
+
+1. `POST /admin/seed?source=fixture` -- returns `202` with a `poll_url`
+2. `GET /admin/jobs/{id}` -- follow it to completion
+3. `GET /admin/stats` -- re-run to watch the row counts fill in
+
+Admin routes use HTTP Basic, defaulting to `admin` / `pokemon`
+(`ADMIN_USERNAME` / `ADMIN_PASSWORD`). `/docs`, `/redoc` and `/openapi.json`
+are deliberately open so the API can be browsed without credentials.
+
+Long jobs never run inside the request. A multi-minute seed would hang the
+Swagger page and could hit a proxy timeout mid-demo, so admin jobs record a row
+in `job`, hand off to a background task, and answer `202` immediately. Starting
+a second job of a kind already running returns `409`, guarded by a partial
+unique index rather than by an application check alone.
+
+`GET /admin/stats` also reports data-quality checks. A Pokemon with a null
+sprite renders as a blank tile in the catalog, and noticing that here is far
+cheaper than noticing it during a demo. Two of the three conditions are
+currently impossible by construction -- `type1` and `raw` are `NOT NULL` -- so
+they guard against schema drift rather than against today's data.
+
 ## Seeding
 
 All `make` targets live in `api/` and run from there:

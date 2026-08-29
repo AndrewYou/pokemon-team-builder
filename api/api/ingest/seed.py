@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -45,6 +45,11 @@ from api.models import (
 _MAX_BIND_PARAMS = 30_000
 
 EXPECTED_TYPE_CHART_ROWS = len(normalize.CANONICAL_TYPES) ** 2
+
+# Called with a short phase description so a caller -- the admin job runner --
+# can surface progress. A multi-minute job that reports nothing is
+# indistinguishable from a hung one.
+ProgressCallback = Callable[[str], Awaitable[None]]
 
 
 def describe_target(url: str) -> str:
@@ -124,14 +129,21 @@ def _normalise_many(
     return results
 
 
-async def seed(source: PokemonSource) -> SeedReport:
+async def seed(source: PokemonSource, on_progress: ProgressCallback | None = None) -> SeedReport:
     """Fetch everything from `source` and upsert it into Postgres."""
     report = SeedReport()
 
+    async def progress(message: str) -> None:
+        if on_progress is not None:
+            await on_progress(message)
+
     print(f"Seeding from source: {source.name}")
     print(f"Target database:    {describe_target(settings.async_database_url)}")
+    await progress("fetching types")
     types: FetchResult = await source.fetch_types()
+    await progress("fetching moves")
     moves: FetchResult = await source.fetch_moves()
+    await progress("fetching pokemon")
     pokemon: FetchResult = await source.fetch_pokemon()
     report.fetch_failures = [*types.failures, *moves.failures, *pokemon.failures]
 
@@ -144,6 +156,7 @@ async def seed(source: PokemonSource) -> SeedReport:
             f"type chart has {len(type_rows)} rows, expected {EXPECTED_TYPE_CHART_ROWS}"
         )
 
+    await progress("normalising")
     move_rows = _normalise_many(moves.items, "move", normalize.move_row, report.record_errors)
     pokemon_rows = _normalise_many(
         pokemon.items, "pokemon", normalize.pokemon_row, report.record_errors
@@ -162,6 +175,7 @@ async def seed(source: PokemonSource) -> SeedReport:
                 RecordError(entity="pokemon_relations", identity=identity, error=repr(exc))
             )
 
+    await progress("writing rows")
     async with SessionLocal() as session:
         await _upsert(
             session,
@@ -235,6 +249,7 @@ async def seed(source: PokemonSource) -> SeedReport:
         )
         await session.commit()
 
+        await progress("counting rows")
         for model in (Pokemon, Move, PokemonMove, PokemonAbility, TypeChart):
             total = await session.scalar(select(func.count()).select_from(model))
             report.counts[model.__tablename__] = int(total or 0)
