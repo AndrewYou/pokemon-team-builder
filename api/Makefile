@@ -5,14 +5,24 @@
 export PATH := $(HOME)/.local/bin:$(PATH)
 
 .DEFAULT_GOAL := help
-.PHONY: help seed seed-live fixture migrate check
+.PHONY: help dev seed seed-live fixture migrate check
+
+# Local Postgres, stated explicitly. api/.env may hold production
+# credentials for deploys, and a dev server that quietly talks to production
+# is both slow and dangerous.
+LOCAL_DB ?= postgresql+asyncpg://postgres:postgres@localhost:5432/pokemon
 
 help:
+	@echo "dev        Run the API against local Postgres with auto-reload"
 	@echo "seed       Seed Postgres from the committed fixture (default, offline)"
 	@echo "seed-live  Seed Postgres from pokeapi.co (thousands of requests)"
 	@echo "fixture    Regenerate fixtures/pokeapi-snapshot.json from pokeapi.co"
 	@echo "migrate    Apply Alembic migrations"
 	@echo "check      Lint, typecheck, and test"
+
+# Auto-reload on save, pinned to local Postgres regardless of what .env says.
+dev:
+	DATABASE_URL="$(LOCAL_DB)" uv run uvicorn api.main:app --reload --port 8000
 
 # Fixture is the default so that a stray `make seed` can never hammer PokeAPI.
 seed:

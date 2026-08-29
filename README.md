@@ -59,6 +59,11 @@ cd web && npm install && npm run dev     # needs the API running
 npm run generate:api                     # regenerate the typed client
 ```
 
+TypeScript is pinned to 5.9 rather than the template's 6.x, because
+`openapi-typescript` declares a peer range of `^5.x`. Suppressing that with
+`--legacy-peer-deps` works locally and then fails on a clean `npm install`,
+which is what Vercel runs. Nothing here needs TypeScript 6.
+
 The API client is generated from the server's OpenAPI document into
 `src/api/schema.d.ts`. Nothing restates a request or response shape by hand: if
 the server changes one, the frontend stops compiling rather than failing at
