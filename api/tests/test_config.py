@@ -1,6 +1,6 @@
 """Tests for asyncpg URL normalization -- the part most likely to break a deploy."""
 
-from api.config import normalize_asyncpg_url
+from api.config import Settings, normalize_asyncpg_url
 
 
 def test_bare_postgres_scheme_gains_asyncpg_driver() -> None:
@@ -39,18 +39,55 @@ def test_already_normalized_url_is_unchanged() -> None:
     assert tls is False
 
 
-def test_alembic_url_is_separate_and_uses_psycopg() -> None:
-    """The two URLs must not collapse into one: different drivers, different rules."""
-    from api.config import settings
+class TestAlembicUrl:
+    """Alembic runs synchronously on psycopg while the app runs on asyncpg.
 
-    assert "+asyncpg" in settings.async_database_url
-    assert "+psycopg" in settings.alembic_database_url
-    assert "asyncpg" not in settings.alembic_database_url
+    Settings are constructed explicitly rather than read from the global, so
+    these assertions do not depend on whatever .env happens to hold.
+    """
 
+    def test_explicit_value_wins(self) -> None:
+        settings = Settings(
+            database_url="postgresql+asyncpg://u:p@host/db",
+            alembic_database_url="postgresql+psycopg://other/db",
+        )
+        assert settings.alembic_url == "postgresql+psycopg://other/db"
 
-def test_alembic_url_keeps_sslmode() -> None:
-    """psycopg reads sslmode natively, so it must survive untouched."""
-    from api.config import Settings
+    def test_derives_from_database_url_when_unset(self) -> None:
+        """Railway configures DATABASE_URL only. Without this fallback the
+        migration on container start would target the localhost default and
+        the container would never come up."""
+        settings = Settings(
+            database_url="postgresql+asyncpg://u:p@host/db", alembic_database_url=""
+        )
+        assert settings.alembic_url == "postgresql+psycopg://u:p@host/db"
 
-    settings = Settings(alembic_database_url="postgresql+psycopg://u:p@host/db?sslmode=require")
-    assert "sslmode=require" in settings.alembic_database_url
+    def test_derivation_never_leaves_an_async_driver(self) -> None:
+        settings = Settings(
+            database_url="postgresql+asyncpg://u:p@host/db", alembic_database_url=""
+        )
+        assert "asyncpg" not in settings.alembic_url
+
+    def test_derivation_keeps_sslmode(self) -> None:
+        """psycopg reads sslmode natively, so it must survive the rewrite --
+        unlike the asyncpg URL, where it is stripped."""
+        settings = Settings(
+            database_url="postgresql+asyncpg://u:p@host/db?sslmode=require",
+            alembic_database_url="",
+        )
+        assert "sslmode=require" in settings.alembic_url
+
+    def test_bare_scheme_is_also_rewritten(self) -> None:
+        settings = Settings(database_url="postgresql://u:p@host/db", alembic_database_url="")
+        assert settings.alembic_url.startswith("postgresql+psycopg://")
+
+    def test_the_two_urls_use_different_drivers(self) -> None:
+        settings = Settings(
+            database_url="postgresql+asyncpg://u:p@host/db?sslmode=require",
+            alembic_database_url="",
+        )
+        assert "+asyncpg" in settings.async_database_url
+        assert "+psycopg" in settings.alembic_url
+        # sslmode is stripped for asyncpg but kept for psycopg.
+        assert "sslmode" not in settings.async_database_url
+        assert "sslmode" in settings.alembic_url

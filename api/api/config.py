@@ -52,6 +52,16 @@ def normalize_asyncpg_url(url: str) -> tuple[str, bool]:
     return rewritten, require_tls
 
 
+def to_psycopg_url(url: str) -> str:
+    """Rewrite any Postgres URL onto the sync psycopg driver.
+
+    The query string is carried over untouched: psycopg is libqp-based and reads
+    `sslmode` natively, unlike asyncpg.
+    """
+    parts = urlsplit(url)
+    return urlunsplit(("postgresql+psycopg", parts.netloc, parts.path, parts.query, parts.fragment))
+
+
 class Settings(BaseSettings):
     """Runtime configuration. Every value is overridable by an env var."""
 
@@ -62,8 +72,11 @@ class Settings(BaseSettings):
         description="Async connection string used by the application.",
     )
     alembic_database_url: str = Field(
-        default="postgresql+psycopg://postgres:postgres@localhost:5432/pokemon",
-        description="Sync connection string used by Alembic migrations.",
+        default="",
+        description=(
+            "Sync connection string used by Alembic. When unset it is derived "
+            "from DATABASE_URL by swapping in the psycopg driver."
+        ),
     )
     # The wildcard is legal only because allow_credentials is False: no cookies
     # or Authorization headers cross this boundary, so there is nothing to protect.
@@ -91,6 +104,18 @@ class Settings(BaseSettings):
     @property
     def database_requires_tls(self) -> bool:
         return normalize_asyncpg_url(self.database_url)[1]
+
+    @property
+    def alembic_url(self) -> str:
+        """The URL Alembic actually runs against.
+
+        Falls back to DATABASE_URL with the driver swapped. Migrations run on
+        container start, and a platform that only ever sets DATABASE_URL would
+        otherwise send them at the localhost default and refuse to boot.
+        """
+        if self.alembic_database_url:
+            return self.alembic_database_url
+        return to_psycopg_url(self.database_url)
 
     @property
     def cors_origin_list(self) -> list[str]:

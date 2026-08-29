@@ -124,7 +124,7 @@ write a partial snapshot at all.
 | Service | Variable | Notes |
 | --- | --- | --- |
 | api | `DATABASE_URL` | `postgresql+asyncpg://…` — the application. |
-| api | `ALEMBIC_DATABASE_URL` | `postgresql+psycopg://…` — migrations. |
+| api | `ALEMBIC_DATABASE_URL` | `postgresql+psycopg://…` — migrations. Optional: derived from `DATABASE_URL` when unset. |
 | api | `CORS_ORIGINS` | Comma-separated. Defaults to `*`, legal because `allow_credentials=False`. |
 | web | `VITE_API_URL` | Base URL of the API, no trailing slash. Baked in at build time. |
 
@@ -154,3 +154,13 @@ Same database, two drivers, because the app is async and Alembic is not.
 
 `VITE_API_URL` is inlined at build time, so changing it requires a redeploy of
 the frontend, not just a restart.
+
+### Migrations run on deploy
+
+The container runs `alembic upgrade head` before starting uvicorn, so a deploy
+that adds a table cannot leave the API answering 500s against an older schema.
+If the migration fails the container deliberately does not come up, rather than
+serving a half-migrated database.
+
+Only `DATABASE_URL` needs to be configured on the platform: Alembic derives its
+own psycopg URL from it when `ALEMBIC_DATABASE_URL` is unset.

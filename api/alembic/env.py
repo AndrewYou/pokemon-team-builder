@@ -29,7 +29,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Supplied at runtime so credentials never live in a tracked file.
-config.set_main_option("sqlalchemy.url", settings.alembic_database_url)
+config.set_main_option("sqlalchemy.url", settings.alembic_url)
 
 # No models are defined yet; autogenerate will pick them up once they exist.
 target_metadata = Base.metadata
@@ -38,7 +38,7 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without connecting to a database."""
     context.configure(
-        url=settings.alembic_database_url,
+        url=settings.alembic_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

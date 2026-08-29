@@ -29,7 +29,13 @@ USER appuser
 
 EXPOSE 8000
 
+# Migrations run before the server so a deploy that adds a table cannot leave
+# the API answering 500s against an older schema. The `&&` is deliberate: if the
+# migration fails the container must not come up serving a half-migrated
+# database. Alembic falls back to DATABASE_URL when ALEMBIC_DATABASE_URL is
+# unset, so the platform only has to configure one variable.
+#
 # 0.0.0.0 is mandatory: binding 127.0.0.1 yields a container that starts fine
 # and is unreachable from outside. Railway injects $PORT; the fallback keeps
 # plain `docker run` and docker-compose working, where PORT is unset.
-CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
