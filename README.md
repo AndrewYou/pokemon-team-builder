@@ -52,6 +52,53 @@ cd api && make check
 cd web && npm run build
 ```
 
+## Frontend
+
+```bash
+cd web && npm install && npm run dev     # needs the API running
+npm run generate:api                     # regenerate the typed client
+```
+
+The API client is generated from the server's OpenAPI document into
+`src/api/schema.d.ts`. Nothing restates a request or response shape by hand: if
+the server changes one, the frontend stops compiling rather than failing at
+runtime.
+
+Identity is a UUID minted on first load and kept in `localStorage`, attached as
+`X-User-Id` by client middleware rather than per call, so a new endpoint cannot
+forget it and silently read an empty account.
+
+### Design
+
+The 18 type colours are the one piece of authentic branding worth using, and
+they are functional -- colour encodes type, so the grid is scannable without
+reading. They are used as accents only: badge text, a card's top hairline, the
+tint behind a sprite, the outline on a hovered slot. Full type-coloured surfaces
+are what dates this kind of project, and several of the colours fail contrast as
+backgrounds anyway.
+
+Sprites are 96x96 pixel art rendered at exactly 96px -- one source pixel per CSS
+pixel, so there is no scaling at all -- with `image-rendering: pixelated` and a
+tinted mount around them. Crisp pixels in a clean frame read as deliberate;
+blurry ones read as a bug.
+
+Elevation is reserved for the card being dragged. Everything else separates with
+a hairline border, so a shadow means "in hand" and nothing else. All motion is
+disabled under `prefers-reduced-motion`, keeping opacity fades.
+
+All four async states are built for every view, with skeletons matched to the
+real card dimensions so nothing jumps when data lands.
+
+### Drag and drop
+
+Catalog cards are draggable, the six slots are droppable, and the roster is
+sortable. A drop produces a whole new ordering, which is sent as one debounced
+`PUT` with an optimistic update, so a card lands where it was dropped rather than
+snapping back and jumping into place when the server answers.
+
+Keyboard dragging is enabled, not left mouse-only: cards are real buttons, and
+`KeyboardSensor` picks them up with space and moves them with arrows.
+
 ## Swagger is the demo surface
 
 `/` redirects to `/docs`. Everything is runnable from that page; no curl needed.

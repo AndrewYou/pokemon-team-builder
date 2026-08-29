@@ -128,3 +128,163 @@
     @apply font-sans;
     }
 }
+/* =========================================================================
+   Design system
+   Dark by default. The canvas stays near-neutral and one accent does the
+   work; the 18 type colours are the only saturated hues on the page, and
+   they are functional -- colour encodes type so the grid is scannable
+   without reading.
+   ========================================================================= */
+
+@import "@fontsource-variable/space-grotesk";
+
+:root {
+  /* The 18 type colours. Used as ACCENTS -- text, borders, low-alpha tints --
+     never as card surfaces. Several of them fail contrast as backgrounds, and
+     full type-coloured cards are what dates this kind of project. */
+  --type-normal: #a8a77a;
+  --type-fire: #ee8130;
+  --type-water: #6390f0;
+  --type-electric: #f7d02c;
+  --type-grass: #7ac74c;
+  --type-ice: #96d9d6;
+  --type-fighting: #c22e28;
+  --type-poison: #a33ea1;
+  --type-ground: #e2bf65;
+  --type-flying: #a98ff3;
+  --type-psychic: #f95587;
+  --type-bug: #a6b91a;
+  --type-rock: #b6a136;
+  --type-ghost: #735797;
+  --type-dragon: #6f35fc;
+  --type-dark: #705746;
+  --type-steel: #b7b7ce;
+  --type-fairy: #d685ad;
+
+  /* Effectiveness severity, for counter-team multipliers. */
+  --sev-immune: #64748b;
+  --sev-resist: #38bdf8;
+  --sev-neutral: #94a3b8;
+  --sev-super: #f59e0b;
+  --sev-quad: #f43f5e;
+
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-pill: 999px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+}
+
+@theme inline {
+  --font-display: 'Space Grotesk Variable', 'Geist Variable', sans-serif;
+}
+
+/* Near-black rather than pure black: pure #000 makes the hairline borders
+   that separate surfaces disappear. */
+.dark {
+  --background: oklch(0.15 0.006 265);
+  --card: oklch(0.19 0.006 265);
+  --popover: oklch(0.19 0.006 265);
+  --border: oklch(0.28 0.008 265);
+  --input: oklch(0.28 0.008 265);
+  --muted: oklch(0.23 0.006 265);
+}
+
+/* A type's accent colour, and a low-alpha tint derived from it for fills. */
+[data-type] {
+  --type: var(--type-normal);
+}
+[data-type="normal"] { --type: var(--type-normal); }
+[data-type="fire"] { --type: var(--type-fire); }
+[data-type="water"] { --type: var(--type-water); }
+[data-type="electric"] { --type: var(--type-electric); }
+[data-type="grass"] { --type: var(--type-grass); }
+[data-type="ice"] { --type: var(--type-ice); }
+[data-type="fighting"] { --type: var(--type-fighting); }
+[data-type="poison"] { --type: var(--type-poison); }
+[data-type="ground"] { --type: var(--type-ground); }
+[data-type="flying"] { --type: var(--type-flying); }
+[data-type="psychic"] { --type: var(--type-psychic); }
+[data-type="bug"] { --type: var(--type-bug); }
+[data-type="rock"] { --type: var(--type-rock); }
+[data-type="ghost"] { --type: var(--type-ghost); }
+[data-type="dragon"] { --type: var(--type-dragon); }
+[data-type="dark"] { --type: var(--type-dark); }
+[data-type="steel"] { --type: var(--type-steel); }
+[data-type="fairy"] { --type: var(--type-fairy); }
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+  }
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+  /* Stats and multipliers must not jitter as they update. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* PokeAPI sprites are 96x96 pixel art. Default smoothing turns them to
+     mush when scaled; crisp pixels in a clean frame read as deliberate. */
+  .sprite {
+    image-rendering: pixelated;
+  }
+
+  .type-tint {
+    background: color-mix(in oklch, var(--type) 12%, transparent);
+  }
+
+  .card-surface {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+  }
+
+  /* Cards enter with a short stagger rather than appearing all at once. */
+  @keyframes card-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  .card-enter {
+    animation: card-in var(--dur-base) var(--ease-out) both;
+  }
+
+  @keyframes shimmer {
+    100% { transform: translateX(100%); }
+  }
+  .skeleton-shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in oklch, var(--foreground) 6%, transparent),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+  }
+}
+
+/* Motion is decoration here, never information. Transforms are removed and
+   opacity fades kept, so nothing becomes unreadable. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .card-enter {
+    animation: none;
+    opacity: 1;
+  }
+}
