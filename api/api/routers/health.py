@@ -5,9 +5,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_session
-from app.schemas import HealthResponse
-from app.services import health as health_service
+from api.db import get_session
+from api.schemas import HealthResponse
+from api.services import health as health_service
 
 router = APIRouter(tags=["health"])
 

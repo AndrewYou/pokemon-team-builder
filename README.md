@@ -27,7 +27,7 @@ cd web && cp .env.example .env && npm install && npm run dev   # :5173
 To run the API without Docker, start Postgres yourself and:
 
 ```bash
-cd api && cp .env.example .env && uv sync && uv run uvicorn app.main:app --reload
+cd api && cp .env.example .env && uv sync && uv run uvicorn api.main:app --reload
 ```
 
 `GET /health` runs `SELECT 1` and returns `{ok, db}`. It answers `200` even when
@@ -37,7 +37,7 @@ check stays green while the frontend can still show *why* it is unreachable.
 ### Checks
 
 ```bash
-cd api && uv run ruff check . && uv run mypy app tests && uv run pytest
+cd api && uv run ruff check . && uv run mypy api tests && uv run pytest
 cd web && npm run build
 ```
 
@@ -45,15 +45,30 @@ cd web && npm run build
 
 | Service | Variable | Notes |
 | --- | --- | --- |
-| api | `DATABASE_URL` | Neon connection string. A plain `postgresql://…?sslmode=require` URL is accepted and normalized for asyncpg at startup. |
-| api | `CORS_ORIGINS` | Comma-separated. Defaults to `*`, which is legal here because `allow_credentials=False`. |
+| api | `DATABASE_URL` | `postgresql+asyncpg://…` — the application. |
+| api | `ALEMBIC_DATABASE_URL` | `postgresql+psycopg://…` — migrations. |
+| api | `CORS_ORIGINS` | Comma-separated. Defaults to `*`, legal because `allow_credentials=False`. |
 | web | `VITE_API_URL` | Base URL of the API, no trailing slash. Baked in at build time. |
+
+### Why two database URLs
+
+Same database, two drivers, because the app is async and Alembic is not.
+
+- **`+asyncpg` is not optional.** Without the driver marker SQLAlchemy reaches
+  for psycopg2, which is not installed, and fails on import.
+- **asyncpg does not understand `?sslmode=require`.** It is a libpq parameter;
+  asyncpg raises `TypeError` on the unexpected connect kwarg. It is stripped
+  from `DATABASE_URL` and re-applied as `connect_args={"ssl": "require"}`.
+- **Alembic runs synchronously** on `postgresql+psycopg://`. psycopg is
+  libpq-based and reads `sslmode` natively, so that URL is passed through as-is.
+  A separate variable is simpler than an async Alembic environment.
 
 ## Deploy
 
 1. **Neon** — create a project, copy the pooled connection string.
 2. **Railway** — new project from this repo, root directory `api`, Dockerfile
-   builder. Set `DATABASE_URL`. Generate a public domain.
+   builder. Set `DATABASE_URL` and `ALEMBIC_DATABASE_URL`. Generate a public
+   domain. The container binds `0.0.0.0:$PORT`, which Railway injects.
 3. **Vercel** — import the repo, root directory `web`. Set `VITE_API_URL` to the
    Railway URL. Deploy.
 4. Set `CORS_ORIGINS` on Railway to the Vercel URL and redeploy.

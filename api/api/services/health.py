@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas import HealthResponse
+from api.schemas import HealthResponse
 
 logger = logging.getLogger(__name__)
 

@@ -19,12 +19,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY alembic.ini ./
 COPY alembic ./alembic
-COPY app ./app
+COPY api ./api
 
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
 
-# Railway injects $PORT; default to 8000 for plain `docker run`.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# 0.0.0.0 is mandatory: binding 127.0.0.1 yields a container that starts fine
+# and is unreachable from outside. Railway injects $PORT; the fallback keeps
+# plain `docker run` and docker-compose working, where PORT is unset.
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

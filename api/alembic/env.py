@@ -1,26 +1,31 @@
-"""Alembic environment. Reads its URL from the app settings, not alembic.ini."""
+"""Alembic environment.
 
-import asyncio
+Migrations run synchronously against ALEMBIC_DATABASE_URL (psycopg). The
+application's async engine is deliberately not reused: an async Alembic setup
+buys nothing here and costs a greenlet bridge in every migration.
+"""
+
 import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
-# Ensure `app` is importable regardless of the directory alembic is invoked from.
+# Ensure `api` is importable regardless of the directory alembic is invoked from.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import settings  # noqa: E402
-from app.db import Base  # noqa: E402
+from api.config import settings  # noqa: E402
+from api.db import Base  # noqa: E402
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Supplied at runtime so credentials never live in a tracked file.
+config.set_main_option("sqlalchemy.url", settings.alembic_database_url)
 
 # No models are defined yet; autogenerate will pick them up once they exist.
 target_metadata = Base.metadata
@@ -29,7 +34,7 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without connecting to a database."""
     context.configure(
-        url=settings.async_database_url,
+        url=settings.alembic_database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -38,25 +43,18 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    connectable = create_async_engine(
-        settings.async_database_url,
-        poolclass=pool.NullPool,
-        connect_args={"ssl": "require"} if settings.database_requires_tls else {},
-    )
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
-
-
 def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
+    """Connect via psycopg and run migrations in a transaction."""
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+    connectable.dispose()
 
 
 if context.is_offline_mode():

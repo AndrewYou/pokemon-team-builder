@@ -20,6 +20,7 @@ services:
     environment:
       # `db` is the compose service name; no sslmode, so no TLS is negotiated.
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/pokemon
+      ALEMBIC_DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/pokemon
       CORS_ORIGINS: "*"
     ports:
       - "8000:8000"

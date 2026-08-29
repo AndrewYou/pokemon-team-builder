@@ -3,8 +3,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
-from app.routers import health
+from api.config import settings
+from api.routers import health
 
 app = FastAPI(title="Pokemon Team Builder API", version="0.1.0")
 
