@@ -19,10 +19,26 @@ CACHE_CONTROL = "public, max-age=3600, stale-while-revalidate=86400"
 
 
 class SortOption(enum.StrEnum):
-    """Catalog ordering. A dropdown rather than free text."""
+    """Catalog ordering. A dropdown rather than free text, and validated as an
+    enum so nothing from the query string can reach SQL."""
 
     id = "id"
     name = "name"
+    total = "total"
+    hp = "hp"
+    attack = "attack"
+    speed = "speed"
+
+
+class SortOrder(enum.StrEnum):
+    """Sort direction, kept separate from the field.
+
+    Folding direction into the field list would double the options and double
+    again with every field added.
+    """
+
+    asc = "asc"
+    desc = "desc"
 
 
 @router.get(
@@ -36,7 +52,11 @@ class SortOption(enum.StrEnum):
         "OFFSET gets slower the deeper you scroll and can skip or repeat rows if "
         "the data shifts mid-scroll.\n\n"
         "`type` matches either type slot. `search` is a case-insensitive prefix "
-        "match served by an index."
+        "match served by an index.\n\n"
+        "`sort` accepts id, name, total, hp, attack, or speed, with `order` "
+        "controlling direction. Id is always the final ordering term so that "
+        "rows sharing a value -- hundreds of Pokemon share a base stat total -- "
+        "cannot reorder between pages and produce duplicates or gaps."
     ),
     responses={
         400: error_response(
@@ -58,7 +78,8 @@ async def list_pokemon(
     search: Annotated[
         str | None, Query(description="Case-insensitive name prefix, e.g. `pika`.")
     ] = None,
-    sort: Annotated[SortOption, Query(description="Ordering.")] = SortOption.id,
+    sort: Annotated[SortOption, Query(description="Field to order by.")] = SortOption.id,
+    order: Annotated[SortOrder, Query(description="Direction.")] = SortOrder.asc,
 ) -> PokemonPage:
     response.headers["Cache-Control"] = CACHE_CONTROL
     try:
@@ -69,6 +90,7 @@ async def list_pokemon(
             type_name=type.value if type else None,
             search=search,
             sort=sort.value,
+            order=order.value,
         )
     except catalog_service.CursorError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

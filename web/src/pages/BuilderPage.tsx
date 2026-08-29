@@ -2,6 +2,7 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
+  MeasuringStrategy,
   PointerSensor,
   closestCenter,
   useSensor,
@@ -10,68 +11,102 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import type { PokemonSummary, TeamMember } from '@/api/client'
-import { useCreateTeam, useSetRoster, useTeams } from '@/api/queries'
-import { AlertBanner } from '@/components/builder/AlertBanner'
+import {
+  applyOptimisticRoster,
+  useCreateTeam,
+  useSetRoster,
+  useTeams,
+  type RosterEntry,
+} from '@/api/queries'
 import { Catalog } from '@/components/builder/Catalog'
 import { CardBody } from '@/components/builder/PokemonCard'
-import { CounterTeam } from '@/components/builder/CounterTeam'
 import { ErrorState, Sprite } from '@/components/builder/primitives'
-import { MAX_SLOTS, TeamSlots } from '@/components/builder/TeamSlots'
-import { TeamSwitcher } from '@/components/builder/TeamSwitcher'
+import { TeamBar, TeamRail } from '@/components/builder/TeamDock'
+import { TeamPanel } from '@/components/builder/TeamPanel'
+import { TeamSheet } from '@/components/builder/TeamSheet'
+import { MAX_SLOTS } from '@/components/builder/TeamSlots'
 import { ThemeToggle } from '@/components/builder/ThemeToggle'
+import { useSelectedTeam } from '@/lib/selected-team'
 
 const SAVE_DEBOUNCE_MS = 400
+
+/** A roster entry carries what a slot needs to draw, not just an id. */
+function toEntry(source: TeamMember | PokemonSummary): RosterEntry {
+  return {
+    pokemon_id: 'pokemon_id' in source ? source.pokemon_id : source.id,
+    name: source.name,
+    sprite_url: source.sprite_url,
+    types: source.types,
+  }
+}
 
 export default function BuilderPage() {
   const teams = useTeams()
   const setRoster = useSetRoster()
-  const [activeId, setActiveId] = useState<number | null>(null)
-  const [dragging, setDragging] = useState<PokemonSummary | TeamMember | null>(null)
-
-  const activeTeam = teams.data?.find((team) => team.id === activeId) ?? teams.data?.[0] ?? null
-  const members = useMemo(() => activeTeam?.members ?? [], [activeTeam])
-
-  useEffect(() => {
-    if (activeId === null && activeTeam) setActiveId(activeTeam.id)
-  }, [activeId, activeTeam])
-
-  // A first-time visitor gets a team without asking for one, so the six slots
-  // are there to drag into immediately. Otherwise the first thing anyone sees
-  // is an empty state asking them to press a button, and the slots -- the point
-  // of the screen -- are not on it.
   const createTeam = useCreateTeam()
+  const queryClient = useQueryClient()
+  const { team, select } = useSelectedTeam(teams.data)
+  const [dragging, setDragging] = useState<PokemonSummary | TeamMember | null>(null)
+  const [sheetOpen, setSheetOpen] = useState(false)
+
+  // The grid scrolls, not the page. Sticky alone still leaves the user
+  // fighting scroll position when they drag from the bottom of a long list.
+  const gridRef = useRef<HTMLDivElement>(null)
+
+  const members = useMemo(() => team?.members ?? [], [team])
+  const rosterFull = members.length >= MAX_SLOTS
+
+  // The panel must never render with no team selected.
   const bootstrapped = useRef(false)
   useEffect(() => {
     if (teams.isSuccess && teams.data.length === 0 && !bootstrapped.current) {
       bootstrapped.current = true
-      createTeam.mutate('My team', { onSuccess: (team) => setActiveId(team.id) })
+      createTeam.mutate('My team', { onSuccess: (created) => select(created.id) })
     }
-  }, [teams.isSuccess, teams.data, createTeam])
+  }, [teams.isSuccess, teams.data, createTeam, select])
 
-  // A drag produces a whole new ordering, and a reorder can fire several times
-  // in quick succession. The debounce collapses those into one PUT; the
-  // optimistic update means the UI never waits for it.
-  const pending = useRef<number[] | null>(null)
+  const pending = useRef<RosterEntry[] | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  function persist(pokemonIds: number[]) {
-    if (!activeTeam) return
-    pending.current = pokemonIds
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => {
-      if (pending.current) {
-        setRoster.mutate({ id: activeTeam.id, pokemonIds: pending.current })
-        pending.current = null
-      }
-    }, SAVE_DEBOUNCE_MS)
-  }
+  const persist = useCallback(
+    (entries: RosterEntry[]) => {
+      if (!team) return
+      // The UI updates now; only the PUT is debounced. Deferring both would
+      // leave a click showing nothing for the length of the debounce, and the
+      // next action would read a roster this one had not written yet.
+      applyOptimisticRoster(queryClient, team.id, entries)
+      pending.current = entries
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => {
+        if (pending.current) {
+          setRoster.mutate({ id: team.id, entries: pending.current })
+          pending.current = null
+        }
+      }, SAVE_DEBOUNCE_MS)
+    },
+    [team, setRoster, queryClient],
+  )
 
-  // Pointer needs a small activation distance or a click reads as a drag.
-  // Keyboard is enabled deliberately: drag and drop that only works with a
-  // mouse excludes anyone who does not use one.
+  const addPokemon = useCallback(
+    (pokemon: PokemonSummary) => {
+      if (rosterFull || members.some((member) => member.pokemon_id === pokemon.id)) return
+      persist([...members.map(toEntry), toEntry(pokemon)])
+    },
+    [members, rosterFull, persist],
+  )
+
+  const removeMember = useCallback(
+    (pokemonId: number) => {
+      persist(members.filter((member) => member.pokemon_id !== pokemonId).map(toEntry))
+    },
+    [members, persist],
+  )
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -85,36 +120,38 @@ export default function BuilderPage() {
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     setDragging(null)
-    if (!over || !activeTeam) return
+    if (!over || !team) return
 
-    const activeIdStr = String(active.id)
-    const overIdStr = String(over.id)
+    const activeId = String(active.id)
+    const overId = String(over.id)
 
-    // Reordering within the roster.
-    if (activeIdStr.startsWith('member-')) {
-      const from = members.findIndex((m) => `member-${m.pokemon_id}` === activeIdStr)
-      const to = members.findIndex((m) => `member-${m.pokemon_id}` === overIdStr)
+    if (activeId.startsWith('member-')) {
+      const from = members.findIndex((m) => `member-${m.pokemon_id}` === activeId)
+      const to = members.findIndex((m) => `member-${m.pokemon_id}` === overId)
       if (from === -1 || to === -1 || from === to) return
-      persist(arrayMove(members, from, to).map((m) => m.pokemon_id))
+      persist(arrayMove(members, from, to).map(toEntry))
       return
     }
 
-    // Adding from the catalog.
-    if (activeIdStr.startsWith('catalog-') && overIdStr.startsWith('slot-')) {
+    if (activeId.startsWith('catalog-') && overId.startsWith('slot-')) {
       const pokemon = active.data.current?.pokemon as PokemonSummary | undefined
-      if (!pokemon) return
-      if (members.some((m) => m.pokemon_id === pokemon.id)) return
-      if (members.length >= MAX_SLOTS) return
-      persist([...members.map((m) => m.pokemon_id), pokemon.id])
+      if (pokemon) addPokemon(pokemon)
     }
-  }
-
-  function removeMember(pokemonId: number) {
-    persist(members.filter((m) => m.pokemon_id !== pokemonId).map((m) => m.pokemon_id))
   }
 
   const draggingType =
     dragging && 'types' in dragging ? (dragging.types[0] as string | undefined) : undefined
+
+  const panel = (
+    <TeamPanel
+      teams={teams.data ?? []}
+      team={team}
+      members={members}
+      activeType={draggingType}
+      onSelect={select}
+      onRemove={removeMember}
+    />
+  )
 
   return (
     <DndContext
@@ -123,93 +160,83 @@ export default function BuilderPage() {
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={() => setDragging(null)}
+      // Droppable rects are cached, and the grid scrolls underneath a fixed
+      // panel. Without continuous measuring the slots silently stop accepting
+      // drops as soon as the grid moves.
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      // Scoped to the grid. Left on the window, dragging near the panel edge
+      // lurches the whole page.
+      autoScroll={{ canScroll: (element) => element === gridRef.current }}
     >
-      <div className="bg-background text-foreground min-h-svh">
-        <header className="border-border/60 sticky top-0 z-20 border-b backdrop-blur-md">
-          <div className="mx-auto flex max-w-[1400px] items-center gap-3 px-4 py-3">
-            <h1 className="font-display text-sm font-semibold tracking-tight">Team Builder</h1>
-            <span className="text-muted-foreground hidden text-xs sm:inline">
-              Drag a Pokémon into a slot
-            </span>
-            <div className="ml-auto flex items-center gap-2">
-              <ThemeToggle />
-            </div>
+      <div className="bg-background text-foreground flex h-svh flex-col overflow-hidden">
+        <header className="border-border/60 flex shrink-0 items-center gap-3 border-b px-4 py-3">
+          <h1 className="font-display text-sm font-semibold tracking-tight">Team Builder</h1>
+          <span className="text-muted-foreground hidden text-xs sm:inline">
+            Click + to add, drag slots to reorder
+          </span>
+          <div className="ml-auto">
+            <ThemeToggle />
           </div>
         </header>
 
-        <main className="mx-auto flex max-w-[1400px] flex-col gap-4 px-4 py-4">
-          <AlertBanner />
-
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="order-2 min-w-0 lg:order-1">
-              <Catalog rosterFull={members.length >= MAX_SLOTS} />
-            </div>
-
-            <aside className="order-1 flex flex-col gap-4 lg:order-2">
-              <section className="flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-2">
-                  <h2 className="font-display text-sm font-medium">Your team</h2>
-                  <span className="text-muted-foreground tabular text-xs">
-                    {members.length}/{MAX_SLOTS}
-                  </span>
-                </div>
-
-                {teams.isError ? (
-                  <ErrorState
-                    message="Could not load your teams."
-                    onRetry={() => void teams.refetch()}
-                  />
-                ) : teams.isPending ? (
-                  <ul className="flex flex-col gap-2">
-                    {Array.from({ length: MAX_SLOTS }, (_, index) => (
-                      <li
-                        key={index}
-                        className="bg-muted skeleton-shimmer relative h-[60px] overflow-hidden rounded-[12px]"
-                      />
-                    ))}
-                  </ul>
-                ) : (
-                  <TeamSlots
-                    members={members}
-                    activeType={draggingType}
-                    onRemove={removeMember}
-                  />
-                )}
-
-                <TeamSwitcher
-                  teams={teams.data ?? []}
-                  activeId={activeTeam?.id ?? null}
-                  onSelect={setActiveId}
-                />
-              </section>
-
-              <CounterTeam members={members} />
-            </aside>
+        <div className="flex min-h-0 flex-1">
+          {/* Only this scrolls. */}
+          <div ref={gridRef} className="min-w-0 flex-1 overflow-y-auto overscroll-contain">
+            <Catalog
+              teamIds={members.map((member) => member.pokemon_id)}
+              rosterFull={rosterFull}
+              onAdd={addPokemon}
+              scrollRef={gridRef}
+            />
           </div>
-        </main>
+
+          <TeamRail members={members} onExpand={() => setSheetOpen(true)} />
+
+          <aside className="border-border hidden w-[340px] shrink-0 overflow-y-auto border-l lg:block">
+            {teams.isError ? (
+              <div className="p-3">
+                <ErrorState
+                  message="Could not load your teams."
+                  onRetry={() => void teams.refetch()}
+                />
+              </div>
+            ) : (
+              panel
+            )}
+          </aside>
+        </div>
+
+        <TeamBar members={members} onExpand={() => setSheetOpen(true)} />
       </div>
 
-      {/* Rendered detached from the grid, so it can lift above everything.
-          This is the one place a shadow is used: elevation means "in hand". */}
-      <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.16,1,0.3,1)' }}>
-        {dragging ? (
-          <div className="w-[180px] rotate-2 scale-[1.04] cursor-grabbing">
-            {'stats' in dragging ? (
-              <CardBody pokemon={dragging} dragging />
-            ) : (
-              <div className="card-surface flex items-center gap-3 p-2 shadow-2xl">
-                <Sprite
-                  src={dragging.sprite_url}
-                  alt={dragging.name}
-                  size="sm"
-                  type={dragging.types[0]}
-                />
-                <span className="font-display truncate text-sm capitalize">{dragging.name}</span>
-              </div>
-            )}
-          </div>
-        ) : null}
-      </DragOverlay>
+      <TeamSheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
+        {panel}
+      </TeamSheet>
+
+      {/* Portalled to the body so the grid's overflow container cannot clip
+          the card being dragged. */}
+      {createPortal(
+        <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.16,1,0.3,1)' }}>
+          {dragging ? (
+            <div className="w-[180px] rotate-2 scale-[1.04] cursor-grabbing">
+              {'stats' in dragging ? (
+                <CardBody pokemon={dragging} dragging />
+              ) : (
+                <div className="card-surface flex items-center gap-3 p-2 shadow-2xl">
+                  <Sprite
+                    src={dragging.sprite_url}
+                    alt={dragging.name}
+                    size="sm"
+                    type={dragging.types[0]}
+                  />
+                  <span className="font-display truncate text-sm capitalize">{dragging.name}</span>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </DragOverlay>,
+        document.body,
+      )}
     </DndContext>
   )
 }

@@ -14,6 +14,25 @@ export function DisplayName({ name, className }: { name: string; className?: str
  * `image-rendering: pixelated`. Crisp pixels inside a clean frame read as a
  * deliberate choice; the browser's default smoothing reads as a bug.
  */
+/**
+ * A neutral stand-in for a Pokemon with no sprite.
+ *
+ * A few entries genuinely have a null front_default. The name is always
+ * rendered beside this by every caller, so the slot still identifies what it
+ * holds -- what must never appear is a technical fallback string like
+ * "No sprite", which reads as a bug rather than as missing artwork.
+ */
+function Silhouette({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={cn('text-muted-foreground/40', className)}>
+      <path
+        fill="currentColor"
+        d="M12 3a9 9 0 0 0-8.94 8h5.1a4 4 0 0 1 7.68 0h5.1A9 9 0 0 0 12 3Zm8.94 10h-5.1a4 4 0 0 1-7.68 0h-5.1A9 9 0 0 0 12 21a9 9 0 0 0 8.94-8ZM12 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z"
+      />
+    </svg>
+  )
+}
+
 export function Sprite({
   src,
   alt,
@@ -27,8 +46,7 @@ export function Sprite({
 }) {
   // The sprites are natively 96x96. Rendering them at exactly that size means
   // one source pixel per CSS pixel -- no scaling artefacts at all -- and the
-  // mount supplies the breathing room instead. A fixed mount height also stops
-  // the square becoming enormous in a single-column layout.
+  // mount supplies the breathing room instead.
   const mount = { sm: 'size-12', md: 'h-32 w-full', lg: 'h-36 w-full' }[size]
   const image = { sm: 'size-10', md: 'size-24', lg: 'size-28' }[size]
 
@@ -46,7 +64,7 @@ export function Sprite({
           className={cn('sprite', image)}
         />
       ) : (
-        <span className="text-muted-foreground text-[10px]">no sprite</span>
+        <Silhouette className={image} />
       )}
     </div>
   )

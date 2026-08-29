@@ -94,6 +94,54 @@ disabled under `prefers-reduced-motion`, keeping opacity fades.
 All four async states are built for every view, with skeletons matched to the
 real card dimensions so nothing jumps when data lands.
 
+### Layout
+
+With 1300 entries, a team panel that scrolls away is unusable: you find a
+Pokemon at the bottom of the list and then have to drag it up through an
+auto-scrolling page. So **the grid is its own scroll container** and the panel
+sits beside it. Sticky alone is not enough -- the page still scrolls underneath.
+
+Desktop is two columns with a 340px panel. Tablet collapses to a rail of six
+sprites that expands into a sheet. Mobile pins a bar of six slots and a fill
+count above the grid, expanding into the same sheet, with
+`safe-area-inset-bottom` respected.
+
+### Interaction
+
+**Clicking is the primary way to add**; dragging is an enhancement. Dragging
+across a long scrolling grid is fiddly with a mouse and needs long-press
+gymnastics on touch, so every card has a `+` and every slot a remove control.
+
+**Dragging is for reordering within the team**, which is where it genuinely
+beats clicking and where "order matters" lives. Grid-to-slot dragging still
+works, it just is not the only way in. This is also the accessibility answer:
+the `+` is a real button, so keyboard users never depend on drag semantics.
+
+The drag activator and the add button have to be separate elements. dnd-kit's
+keyboard sensor lifts with Space, which is also what activates a button, so one
+element would both add and start a drag on a single keypress.
+
+Three dnd-kit details matter once the panel is fixed and the grid scrolls
+beneath it. Droppable rects are cached, so `MeasuringStrategy.Always` keeps
+slots accepting drops mid-scroll. Autoscroll is scoped to the grid, or dragging
+near the panel edge lurches the page. And the `DragOverlay` is portalled to the
+body so the grid's overflow container cannot clip the card in hand.
+
+### Sorting
+
+Sort field and direction are separate controls. Folding direction into the field
+list doubles the options and doubles again with each field added. The trigger
+reads "Sort: …" because a bare dropdown next to a search box looks like a
+filter, and the direction toggle's label is field-aware -- "A to Z" for names,
+"Strongest first" for stats.
+
+Both live in the URL, so a sorted view survives a reload and can be shared.
+
+Every sort ends with id in the same direction as the key. Hundreds of Pokemon
+share a base stat total, and without a tiebreaker those rows order arbitrarily
+between pages, which produces duplicates and gaps. The direction has to match
+because the cursor comparison is a row-value comparison over that same tuple.
+
 ### Drag and drop
 
 Catalog cards are draggable, the six slots are droppable, and the roster is

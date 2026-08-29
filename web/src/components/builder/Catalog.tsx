@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
-import type { TypeName } from '@/api/client'
-import { useCatalog, type CatalogFilters } from '@/api/queries'
+import type { PokemonSummary, TypeName } from '@/api/client'
+import { useCatalog, type SortField, type SortOrder } from '@/api/queries'
 import { cn } from '@/lib/utils'
 
-import { DraggablePokemonCard, PokemonCardSkeleton } from './PokemonCard'
+import { CatalogCard, PokemonCardSkeleton } from './PokemonCard'
 import { EmptyState, ErrorState } from './primitives'
+import { SORT_FIELDS, SortControl } from './SortControl'
 
 const TYPES: TypeName[] = [
   'normal', 'fire', 'water', 'electric', 'grass', 'ice',
@@ -13,27 +15,48 @@ const TYPES: TypeName[] = [
   'rock', 'ghost', 'dragon', 'dark', 'steel', 'fairy',
 ]
 
-// repeat(auto-fill, minmax(180px, 1fr)) -- the column count follows the
-// viewport rather than a breakpoint table.
 const GRID = 'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]'
+const CONTROL = 'border-border bg-card h-8 rounded-[8px] border px-2 text-xs'
 
-export function Catalog({ rosterFull }: { rosterFull: boolean }) {
+export function Catalog({
+  teamIds,
+  rosterFull,
+  onAdd,
+  scrollRef,
+}: {
+  teamIds: number[]
+  rosterFull: boolean
+  onAdd: (pokemon: PokemonSummary) => void
+  scrollRef: RefObject<HTMLDivElement | null>
+}) {
+  // Sort lives in the URL, so a sorted view survives a reload and can be
+  // shared as a link.
+  const [params, setParams] = useSearchParams()
+  const sort = (params.get('sort') as SortField) ?? 'id'
+  const order = (params.get('order') as SortOrder) ?? 'asc'
+
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [type, setType] = useState<string>('')
-  const [sort, setSort] = useState<CatalogFilters['sort']>('id')
+  const [type, setType] = useState('')
 
-  // Typing should not fire a request per keystroke.
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(search.trim()), 250)
     return () => clearTimeout(timer)
   }, [search])
 
-  const query = useCatalog({ search: debounced, type, sort })
+  function changeSort(nextSort: SortField, nextOrder: SortOrder) {
+    const next = new URLSearchParams(params)
+    next.set('sort', nextSort)
+    next.set('order', nextOrder)
+    setParams(next, { replace: true })
+    // Pagination resets on its own -- the query key changed -- but the grid
+    // stays where it was scrolled, which would show page one from the middle.
+    scrollRef.current?.scrollTo({ top: 0 })
+  }
+
+  const query = useCatalog({ search: debounced, type, sort, order })
   const sentinel = useRef<HTMLDivElement>(null)
 
-  // Infinite scroll via IntersectionObserver rather than a scroll listener:
-  // no per-frame work, and it keeps working inside any scroll container.
   useEffect(() => {
     const node = sentinel.current
     if (!node) return
@@ -43,16 +66,20 @@ export function Catalog({ rosterFull }: { rosterFull: boolean }) {
           void query.fetchNextPage()
         }
       },
-      { rootMargin: '600px' },
+      // The grid is its own scroll container, so the observer has to watch
+      // that rather than the viewport.
+      { root: scrollRef.current, rootMargin: '600px' },
     )
     observer.observe(node)
     return () => observer.disconnect()
-  }, [query])
+  }, [query, scrollRef])
 
   const items = query.data?.pages.flatMap((page) => page.items) ?? []
+  const inTeam = new Set(teamIds)
+  const fieldLabel = SORT_FIELDS.find((f) => f.value === sort)?.label ?? 'Pokédex order'
 
   return (
-    <section className="flex min-h-0 flex-col gap-3">
+    <section className="flex flex-col gap-3 p-3">
       <header className="flex flex-wrap items-center gap-2">
         <h2 className="font-display mr-auto text-sm font-medium">Catalog</h2>
         <input
@@ -60,16 +87,16 @@ export function Catalog({ rosterFull }: { rosterFull: boolean }) {
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search by name"
           aria-label="Search Pokémon by name"
-          className={cn(
-            'border-border bg-card h-8 w-40 rounded-[8px] border px-2.5 text-xs',
-            'focus-visible:ring-ring focus-visible:ring-1 focus-visible:outline-none',
-          )}
+          className={cn(CONTROL, 'w-36 focus-visible:ring-ring focus-visible:ring-1 focus-visible:outline-none')}
         />
         <select
           value={type}
-          onChange={(event) => setType(event.target.value)}
+          onChange={(event) => {
+            setType(event.target.value)
+            scrollRef.current?.scrollTo({ top: 0 })
+          }}
           aria-label="Filter by type"
-          className="border-border bg-card h-8 rounded-[8px] border px-2 text-xs capitalize"
+          className={cn(CONTROL, 'capitalize')}
         >
           <option value="">All types</option>
           {TYPES.map((option) => (
@@ -78,22 +105,12 @@ export function Catalog({ rosterFull }: { rosterFull: boolean }) {
             </option>
           ))}
         </select>
-        <select
-          value={sort}
-          onChange={(event) => setSort(event.target.value as CatalogFilters['sort'])}
-          aria-label="Sort order"
-          className="border-border bg-card h-8 rounded-[8px] border px-2 text-xs"
-        >
-          <option value="id">Pokédex order</option>
-          <option value="name">Name</option>
-        </select>
+        <SortControl sort={sort} order={order} onChange={changeSort} />
       </header>
 
       {query.isError ? (
         <ErrorState message="The catalog could not be loaded." onRetry={() => void query.refetch()} />
       ) : query.isPending ? (
-        // Skeletons matched to the real card dimensions, so nothing shifts
-        // when the data lands.
         <div className={GRID}>
           {Array.from({ length: 12 }, (_, index) => (
             <PokemonCardSkeleton key={index} />
@@ -106,13 +123,18 @@ export function Catalog({ rosterFull }: { rosterFull: boolean }) {
         />
       ) : (
         <>
+          <p className="sr-only" aria-live="polite">
+            Sorted by {fieldLabel}, {order === 'asc' ? 'ascending' : 'descending'}
+          </p>
           <div className={GRID}>
             {items.map((pokemon, index) => (
-              <DraggablePokemonCard
+              <CatalogCard
                 key={pokemon.id}
                 pokemon={pokemon}
                 index={index}
-                disabled={rosterFull}
+                inTeam={inTeam.has(pokemon.id)}
+                rosterFull={rosterFull}
+                onAdd={onAdd}
               />
             ))}
           </div>

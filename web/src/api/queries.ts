@@ -4,6 +4,7 @@
  */
 
 import {
+  type QueryClient,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -12,6 +13,45 @@ import {
 
 import { api, type PokemonPage, type TeamRead } from './client'
 
+/**
+ * Write a roster into the cache immediately.
+ *
+ * Separate from the mutation's onMutate because the network write is debounced
+ * and the UI must not be. Applied on every action, the cache is also what the
+ * next action reads, so two quick clicks build on each other instead of the
+ * second one computing from a roster the first has not written yet.
+ */
+export function applyOptimisticRoster(
+  client: QueryClient,
+  teamId: number,
+  entries: RosterEntry[],
+) {
+  client.setQueryData<TeamRead[]>(keys.teams, (teams) =>
+    teams?.map((team) =>
+      team.id === teamId
+        ? {
+            ...team,
+            members: entries.map((entry, index) => ({
+              slot: index + 1,
+              pokemon_id: entry.pokemon_id,
+              name: entry.name,
+              sprite_url: entry.sprite_url,
+              types: entry.types,
+            })),
+          }
+        : team,
+    ),
+  )
+}
+
+/** Everything a slot needs to render. Deliberately not just an id. */
+export interface RosterEntry {
+  pokemon_id: number
+  name: string
+  sprite_url: string | null
+  types: string[]
+}
+
 export const keys = {
   catalog: (filters: CatalogFilters) => ['catalog', filters] as const,
   teams: ['teams'] as const,
@@ -19,10 +59,14 @@ export const keys = {
   counterTeam: ['counter-team'] as const,
 }
 
+export type SortField = 'id' | 'name' | 'total' | 'hp' | 'attack' | 'speed'
+export type SortOrder = 'asc' | 'desc'
+
 export interface CatalogFilters {
   search?: string
   type?: string
-  sort?: 'id' | 'name'
+  sort?: SortField
+  order?: SortOrder
 }
 
 const PAGE_SIZE = 48
@@ -42,6 +86,7 @@ export function useCatalog(filters: CatalogFilters) {
             // has to be absent rather than an empty string.
             type: (filters.type || undefined) as never,
             sort: filters.sort ?? 'id',
+            order: filters.order ?? 'asc',
           },
         },
         signal,
@@ -90,7 +135,20 @@ export function useRenameTeam() {
       if (error) throw new Error('Could not rename the team')
       return data as TeamRead
     },
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.teams }),
+    // The heading is the team name, so a rename has to land instantly or the
+    // user watches their own typing lag behind them.
+    onMutate: async ({ id, name }) => {
+      await client.cancelQueries({ queryKey: keys.teams })
+      const previous = client.getQueryData<TeamRead[]>(keys.teams)
+      client.setQueryData<TeamRead[]>(keys.teams, (teams) =>
+        teams?.map((team) => (team.id === id ? { ...team, name } : team)),
+      )
+      return { previous }
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) client.setQueryData(keys.teams, context.previous)
+    },
+    onSettled: () => client.invalidateQueries({ queryKey: keys.teams }),
   })
 }
 
@@ -114,43 +172,30 @@ export function useDeleteTeam() {
  * jump into place when the server answers. The previous roster is kept so a
  * failure can restore it.
  */
+/**
+ * Replace a team's whole roster.
+ *
+ * Takes full roster entries rather than bare ids. The API only needs the ids,
+ * but the optimistic update needs a name, sprite, and types to render -- and
+ * the grid already holds all of that. Sending only ids meant the optimistic
+ * slot had nothing to draw until the refetch landed, which showed as a
+ * missing-image placeholder for a beat after every add.
+ */
 export function useSetRoster() {
   const client = useQueryClient()
   return useMutation({
-    mutationFn: async ({ id, pokemonIds }: { id: number; pokemonIds: number[] }) => {
+    mutationFn: async ({ id, entries }: { id: number; entries: RosterEntry[] }) => {
       const { data, error } = await api.PUT('/teams/{team_id}/members', {
         params: { path: { team_id: id } },
-        body: { pokemon_ids: pokemonIds },
+        body: { pokemon_ids: entries.map((entry) => entry.pokemon_id) },
       })
       if (error) throw new Error('Could not save the roster')
       return data as TeamRead
     },
-    onMutate: async ({ id, pokemonIds }) => {
+    onMutate: async ({ id, entries }) => {
       await client.cancelQueries({ queryKey: keys.teams })
       const previous = client.getQueryData<TeamRead[]>(keys.teams)
-      client.setQueryData<TeamRead[]>(keys.teams, (teams) =>
-        teams?.map((team) =>
-          team.id === id
-            ? {
-                ...team,
-                members: pokemonIds.map((pokemonId, index) => {
-                  const existing = team.members.find((m) => m.pokemon_id === pokemonId)
-                  return (
-                    existing
-                      ? { ...existing, slot: index + 1 }
-                      : {
-                          slot: index + 1,
-                          pokemon_id: pokemonId,
-                          name: '',
-                          sprite_url: null,
-                          types: [],
-                        }
-                  ) as TeamRead['members'][number]
-                }),
-              }
-            : team,
-        ),
-      )
+      applyOptimisticRoster(client, id, entries)
       return { previous }
     },
     onError: (_error, _vars, context) => {

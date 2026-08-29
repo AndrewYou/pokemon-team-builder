@@ -38,6 +38,8 @@ export interface paths {
          *     Cursor rather than offset because the frontend scrolls infinitely: an OFFSET gets slower the deeper you scroll and can skip or repeat rows if the data shifts mid-scroll.
          *
          *     `type` matches either type slot. `search` is a case-insensitive prefix match served by an index.
+         *
+         *     `sort` accepts id, name, total, hp, attack, or speed, with `order` controlling direction. Id is always the final ordering term so that rows sharing a value -- hundreds of Pokemon share a base stat total -- cannot reorder between pages and produce duplicates or gaps.
          */
         get: operations["list_pokemon_pokemon_get"];
         put?: never;
@@ -1983,10 +1985,20 @@ export interface components {
         };
         /**
          * SortOption
-         * @description Catalog ordering. A dropdown rather than free text.
+         * @description Catalog ordering. A dropdown rather than free text, and validated as an
+         *     enum so nothing from the query string can reach SQL.
          * @enum {string}
          */
-        SortOption: "id" | "name";
+        SortOption: "id" | "name" | "total" | "hp" | "attack" | "speed";
+        /**
+         * SortOrder
+         * @description Sort direction, kept separate from the field.
+         *
+         *     Folding direction into the field list would double the options and double
+         *     again with every field added.
+         * @enum {string}
+         */
+        SortOrder: "asc" | "desc";
         /**
          * StatsResponse
          * @description One call covering the health of the data and the derived layer.
@@ -2338,8 +2350,10 @@ export interface operations {
                 type?: components["schemas"]["TypeName"] | null;
                 /** @description Case-insensitive name prefix, e.g. `pika`. */
                 search?: string | null;
-                /** @description Ordering. */
+                /** @description Field to order by. */
                 sort?: components["schemas"]["SortOption"];
+                /** @description Direction. */
+                order?: components["schemas"]["SortOrder"];
             };
             header?: never;
             path?: never;

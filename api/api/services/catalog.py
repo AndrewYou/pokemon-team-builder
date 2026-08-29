@@ -11,7 +11,7 @@ import binascii
 import json
 from typing import Any
 
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, literal, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import Move, Pokemon, PokemonMove
@@ -25,6 +25,25 @@ from api.schemas import (
 
 DEFAULT_LIMIT = 48
 MAX_LIMIT = 100
+
+# An allowlist, not a lookup into user input. The request carries a key from
+# this mapping and never a column name, so nothing from the query string
+# reaches SQL.
+SORTABLE: dict[str, Any] = {
+    "id": Pokemon.id,
+    "name": Pokemon.name,
+    "total": (
+        Pokemon.base_hp
+        + Pokemon.base_atk
+        + Pokemon.base_def
+        + Pokemon.base_spatk
+        + Pokemon.base_spdef
+        + Pokemon.base_speed
+    ),
+    "hp": Pokemon.base_hp,
+    "attack": Pokemon.base_atk,
+    "speed": Pokemon.base_speed,
+}
 
 _LIST_COLUMNS = (
     Pokemon.id,
@@ -104,32 +123,50 @@ async def list_pokemon(
     type_name: str | None = None,
     search: str | None = None,
     sort: str = "id",
+    order: str = "asc",
 ) -> PokemonPage:
-    """One page of the catalog, keyset paginated."""
-    sort_column = Pokemon.name if sort == "name" else Pokemon.id
+    """One page of the catalog, keyset paginated.
 
-    statement = select(*_LIST_COLUMNS)
+    The sort key is selected alongside the row so the cursor can carry it,
+    which is what lets a computed key like total base stats paginate at all.
+
+    Id is always the final ordering term, in the same direction as the key.
+    Without a tiebreaker, rows sharing a value -- and hundreds of Pokemon share
+    a base stat total -- land in an arbitrary order that can differ between
+    pages, producing duplicates and gaps. The direction has to match, because
+    the keyset comparison is a row-value comparison over the same tuple.
+    """
+    sort_expression = SORTABLE.get(sort, SORTABLE["id"])
+    descending = order == "desc"
+
+    statement = select(*_LIST_COLUMNS, sort_expression.label("sort_key"))
     statement = _apply_filters(statement, type_name, search)
 
     if cursor:
         last_key, last_id = decode_cursor(cursor)
-        # Row-value comparison, so the (key, id) pair advances as one unit.
-        statement = statement.where(
-            (sort_column, Pokemon.id) > (last_key, last_id)  # type: ignore[operator]
-        )
+        # tuple_() rather than a bare Python tuple: this has to compile to a
+        # SQL row-value comparison, which is what advances the key and the
+        # tiebreaker together as one unit.
+        pair = tuple_(sort_expression, Pokemon.id)
+        anchor = tuple_(literal(last_key), literal(last_id))
+        statement = statement.where(pair < anchor if descending else pair > anchor)
 
-    # One extra row is fetched purely to answer "is there a next page" without
-    # a second COUNT query over the whole filtered set.
-    rows = (
-        await session.execute(statement.order_by(sort_column, Pokemon.id).limit(limit + 1))
-    ).all()
+    ordering = (
+        (sort_expression.desc(), Pokemon.id.desc())
+        if descending
+        else (sort_expression.asc(), Pokemon.id.asc())
+    )
+
+    # One extra row answers "is there a next page" without a second COUNT over
+    # the whole filtered set.
+    rows = (await session.execute(statement.order_by(*ordering).limit(limit + 1))).all()
 
     has_more = len(rows) > limit
     page = rows[:limit]
     next_cursor = None
     if has_more and page:
         last = page[-1]
-        next_cursor = encode_cursor(last.name if sort == "name" else last.id, last.id)
+        next_cursor = encode_cursor(last.sort_key, last.id)
 
     return PokemonPage(
         items=[_summary(row) for row in page], next_cursor=next_cursor, has_more=has_more

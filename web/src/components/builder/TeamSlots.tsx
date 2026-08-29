@@ -9,7 +9,12 @@ import { DisplayName, Sprite, TypeBadges } from './primitives'
 
 export const MAX_SLOTS = 6
 
-/** A filled slot. Sortable, so the roster can be reordered by dragging. */
+/**
+ * Filled: a solid card, tinted with the occupant's type.
+ *
+ * Deliberately a different visual language from an empty slot. When both read
+ * as "something is missing", the moment a Pokemon lands is ambiguous.
+ */
 function FilledSlot({
   member,
   index,
@@ -29,10 +34,13 @@ function FilledSlot({
     <li
       ref={setNodeRef}
       data-type={primary}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        background: 'color-mix(in oklch, var(--type) 7%, var(--card))',
+      }}
       className={cn(
-        'card-surface relative flex items-center gap-3 p-2',
-        'transition-[border-color] duration-150',
+        'border-border relative flex h-[60px] items-center gap-2.5 rounded-[12px] border px-2',
         isDragging && 'z-10 opacity-40',
       )}
     >
@@ -41,27 +49,30 @@ function FilledSlot({
         className="absolute inset-y-2 left-0 w-0.5 rounded-full"
         style={{ background: 'var(--type)' }}
       />
-      <span className="text-muted-foreground tabular w-4 shrink-0 text-center text-[11px]">
+      <span className="text-muted-foreground tabular w-3 shrink-0 text-center text-[11px]">
         {index + 1}
       </span>
+      {/* The drag handle is the sprite, and it is a real button so keyboard
+          users can lift it. Reordering is where dragging genuinely beats
+          clicking, and it is where "order matters" lives. */}
       <button
         type="button"
         {...listeners}
         {...attributes}
         aria-label={`${member.name}, slot ${index + 1}. Press space to reorder.`}
-        className="focus-visible:ring-ring cursor-grab rounded-[8px] focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing"
+        className="focus-visible:ring-ring shrink-0 cursor-grab rounded-[10px] focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing"
       >
         <Sprite src={member.sprite_url} alt={member.name} size="sm" type={primary} />
       </button>
       <div className="min-w-0 flex-1">
-        <DisplayName name={member.name} className="font-display block truncate text-sm" />
-        <TypeBadges types={member.types} className="mt-1" />
+        <DisplayName name={member.name} className="font-display block truncate text-xs font-medium" />
+        <TypeBadges types={member.types} className="mt-0.5" />
       </div>
       <button
         type="button"
         onClick={() => onRemove(member.pokemon_id)}
-        aria-label={`Remove ${member.name} from the team`}
-        className="text-muted-foreground hover:text-foreground hover:bg-muted grid size-7 shrink-0 place-items-center rounded-[8px] text-lg leading-none"
+        aria-label={`Remove ${member.name}`}
+        className="text-muted-foreground hover:text-foreground hover:bg-muted grid size-6 shrink-0 place-items-center rounded-[6px] text-base leading-none"
       >
         ×
       </button>
@@ -70,23 +81,37 @@ function FilledSlot({
 }
 
 /**
- * An empty slot.
+ * Pending: the filled shape with a shimmer where the sprite goes.
  *
- * All six are always rendered. An empty team then reads as "six slots to
- * fill" rather than as a blank area with nothing to act on.
+ * Same dimensions as a filled slot, so resolving does not move anything. Only
+ * reachable if a roster entry arrives without its display fields.
  */
+function PendingSlot({ index }: { index: number }) {
+  return (
+    <li className="card-surface flex h-[60px] items-center gap-2.5 px-2">
+      <span className="text-muted-foreground tabular w-3 shrink-0 text-center text-[11px]">
+        {index + 1}
+      </span>
+      <div className="bg-muted skeleton-shimmer relative size-12 shrink-0 overflow-hidden rounded-[10px]" />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="bg-muted skeleton-shimmer relative h-3 w-24 overflow-hidden rounded" />
+        <div className="bg-muted skeleton-shimmer relative h-3 w-14 overflow-hidden rounded" />
+      </div>
+    </li>
+  )
+}
+
+/** Empty: a dashed ghost. No label text -- the dashes and the number say it. */
 function EmptySlot({ index, activeType }: { index: number; activeType?: string }) {
   const { setNodeRef, isOver } = useDroppable({ id: `slot-${index}` })
   return (
     <li
       ref={setNodeRef}
       data-type={activeType}
+      aria-label={`Empty slot ${index + 1}`}
       className={cn(
-        'border-border/60 text-muted-foreground flex h-[60px] items-center gap-3 rounded-[12px]',
-        'border border-dashed px-3 text-xs transition-all duration-150',
-        // The drop target picks up the dragged Pokémon's own colour, so the
-        // feedback says *what* is landing, not just that something is.
-        isOver && 'border-solid',
+        'border-border/50 text-muted-foreground/70 flex h-[60px] items-center gap-2.5 rounded-[12px]',
+        'border border-dashed px-2 transition-all duration-150',
       )}
       style={
         isOver
@@ -98,8 +123,8 @@ function EmptySlot({ index, activeType }: { index: number; activeType?: string }
           : undefined
       }
     >
-      <span className="tabular w-4 text-center text-[11px]">{index + 1}</span>
-      <span>{isOver ? 'Drop to add' : 'Empty slot'}</span>
+      <span className="tabular w-3 shrink-0 text-center text-[11px]">{index + 1}</span>
+      <span className="border-border/50 size-12 shrink-0 rounded-[10px] border border-dashed" />
     </li>
   )
 }
@@ -119,15 +144,21 @@ export function TeamSlots({
       items={members.map((member) => `member-${member.pokemon_id}`)}
       strategy={verticalListSortingStrategy}
     >
-      <ul className="flex flex-col gap-2">
-        {members.map((member, index) => (
-          <FilledSlot
-            key={member.pokemon_id}
-            member={member}
-            index={index}
-            onRemove={onRemove}
-          />
-        ))}
+      <ul className="flex flex-col gap-1.5">
+        {members.map((member, index) =>
+          // A member without display fields cannot be drawn as filled; the
+          // pending shape is the honest thing to show.
+          member.name ? (
+            <FilledSlot
+              key={member.pokemon_id}
+              member={member}
+              index={index}
+              onRemove={onRemove}
+            />
+          ) : (
+            <PendingSlot key={member.pokemon_id} index={index} />
+          ),
+        )}
         {Array.from({ length: empties }, (_, offset) => (
           <EmptySlot
             key={`empty-${members.length + offset}`}
@@ -137,5 +168,35 @@ export function TeamSlots({
         ))}
       </ul>
     </SortableContext>
+  )
+}
+
+/** The compact strip used by the tablet rail and the mobile bar. */
+export function SlotStrip({
+  members,
+  orientation = 'horizontal',
+}: {
+  members: TeamMember[]
+  orientation?: 'horizontal' | 'vertical'
+}) {
+  const empties = Math.max(0, MAX_SLOTS - members.length)
+  return (
+    <div className={cn('flex gap-1.5', orientation === 'vertical' && 'flex-col')}>
+      {members.map((member) => (
+        <Sprite
+          key={member.pokemon_id}
+          src={member.sprite_url}
+          alt={member.name}
+          size="sm"
+          type={member.types[0]}
+        />
+      ))}
+      {Array.from({ length: empties }, (_, offset) => (
+        <span
+          key={offset}
+          className="border-border/50 size-12 shrink-0 rounded-[10px] border border-dashed"
+        />
+      ))}
+    </div>
   )
 }
