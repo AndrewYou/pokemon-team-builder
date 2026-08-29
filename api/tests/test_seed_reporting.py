@@ -8,7 +8,7 @@ most important thing this script gets right.
 from typing import Any
 
 from api.ingest.client import FetchFailure
-from api.ingest.seed import RecordError, SeedReport, _normalise_many
+from api.ingest.seed import RecordError, SeedReport, _normalise_many, describe_target
 
 
 def _boom(payload: dict[str, Any]) -> dict[str, Any]:
@@ -57,3 +57,23 @@ class TestSeedReport:
             record_errors=[RecordError("pokemon", "ivysaur", "KeyError")],
         )
         assert not report.ok
+
+
+class TestDescribeTarget:
+    """The pre-write banner must never leak the password it is summarising."""
+
+    def test_shows_host_and_database(self) -> None:
+        assert (
+            describe_target("postgresql+asyncpg://u:p@db.example.com:5432/pokemon")
+            == "db.example.com/pokemon"
+        )
+
+    def test_omits_credentials(self) -> None:
+        rendered = describe_target("postgresql+asyncpg://neondb_owner:npg_secret@host/neondb")
+        assert "npg_secret" not in rendered
+        assert "neondb_owner" not in rendered
+
+    def test_distinguishes_local_from_remote(self) -> None:
+        assert describe_target("postgresql+asyncpg://u:p@localhost:5432/pokemon").startswith(
+            "localhost/"
+        )

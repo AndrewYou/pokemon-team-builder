@@ -19,6 +19,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -44,6 +45,16 @@ from api.models import (
 _MAX_BIND_PARAMS = 30_000
 
 EXPECTED_TYPE_CHART_ROWS = len(normalize.CANONICAL_TYPES) ** 2
+
+
+def describe_target(url: str) -> str:
+    """Host and database name from a connection URL, with credentials removed.
+
+    Printed before any write. Seeding the wrong database is easy when .env holds
+    production credentials, and it should never be a silent outcome.
+    """
+    parts = urlsplit(url)
+    return f"{parts.hostname or '?'}/{parts.path.lstrip('/') or '?'}"
 
 
 @dataclass(slots=True)
@@ -118,6 +129,7 @@ async def seed(source: PokemonSource) -> SeedReport:
     report = SeedReport()
 
     print(f"Seeding from source: {source.name}")
+    print(f"Target database:    {describe_target(settings.async_database_url)}")
     types: FetchResult = await source.fetch_types()
     moves: FetchResult = await source.fetch_moves()
     pokemon: FetchResult = await source.fetch_pokemon()

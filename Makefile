@@ -1,4 +1,9 @@
 # Convenience targets for the API. All of them run inside api/ via uv.
+#
+# make runs recipes under /bin/sh, which does not read your shell profile, so
+# uv's default install location has to be put back on PATH explicitly.
+export PATH := $(HOME)/.local/bin:$(PATH)
+
 .DEFAULT_GOAL := help
 .PHONY: help seed seed-live fixture migrate check
 
