@@ -17,13 +17,28 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from api.config import settings
 
+# auto_error=False so this dependency answers both the missing-credential and
+# the wrong-credential case. Left on, FastAPI rejects a credential-less request
+# first with its own "Not authenticated" body, so the same 401 would have two
+# different shapes depending on which layer refused it.
 basic_scheme = HTTPBasic(
-    description="Defaults to admin / pokemon unless ADMIN_USERNAME and ADMIN_PASSWORD are set."
+    auto_error=False,
+    description="Defaults to admin / pokemon unless ADMIN_USERNAME and ADMIN_PASSWORD are set.",
 )
 
+ADMIN_UNAUTHORIZED_DETAIL = "Invalid or missing admin credentials"
 
-def verify_admin(credentials: Annotated[HTTPBasicCredentials, Depends(basic_scheme)]) -> str:
+
+def verify_admin(
+    credentials: Annotated[HTTPBasicCredentials | None, Depends(basic_scheme)] = None,
+) -> str:
     """Check HTTP Basic credentials against the configured admin user."""
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ADMIN_UNAUTHORIZED_DETAIL,
+            headers={"WWW-Authenticate": "Basic"},
+        )
     # Both comparisons run unconditionally: short-circuiting on the username
     # would leak which half was wrong through response timing.
     username_ok = secrets.compare_digest(
@@ -35,7 +50,7 @@ def verify_admin(credentials: Annotated[HTTPBasicCredentials, Depends(basic_sche
     if not (username_ok and password_ok):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin credentials",
+            detail=ADMIN_UNAUTHORIZED_DETAIL,
             # Without this header the browser never shows a login prompt.
             headers={"WWW-Authenticate": "Basic"},
         )

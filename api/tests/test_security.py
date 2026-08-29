@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPBasicCredentials
 
 from api.config import settings
-from api.security import verify_admin
+from api.security import ADMIN_UNAUTHORIZED_DETAIL, verify_admin
 
 
 def _creds(username: str, password: str) -> HTTPBasicCredentials:
@@ -40,6 +40,26 @@ def test_rejects_bad_credentials(username: str, password: str) -> None:
     with pytest.raises(HTTPException) as exc:
         verify_admin(_creds(username, password))
     assert exc.value.status_code == 401
+
+
+def test_missing_and_wrong_credentials_give_the_same_body() -> None:
+    """One 401 shape either way. Left to FastAPI's own auto_error, a request
+    with no credentials would be refused earlier with a different body, so the
+    documented example would only ever match one of the two cases."""
+    with pytest.raises(HTTPException) as absent:
+        verify_admin(None)
+    with pytest.raises(HTTPException) as wrong:
+        verify_admin(_creds("admin", "nope"))
+
+    assert absent.value.status_code == wrong.value.status_code == 401
+    assert absent.value.detail == wrong.value.detail == ADMIN_UNAUTHORIZED_DETAIL
+
+
+def test_the_documented_example_is_the_string_actually_raised() -> None:
+    """The Swagger example is taken from this constant rather than retyped."""
+    with pytest.raises(HTTPException) as exc:
+        verify_admin(None)
+    assert exc.value.detail == ADMIN_UNAUTHORIZED_DETAIL
 
 
 def test_challenge_header_is_present() -> None:

@@ -432,11 +432,27 @@ class ErrorResponse(BaseModel):
 
     Matches FastAPI's own HTTPException body so handlers and framework errors
     are indistinguishable to a client.
+
+    Deliberately carries no model-level example. One model documents every
+    failure on every route, so an example here would be shown for all of them:
+    a "Team not found" example would appear under a 401 on /admin/sync.
+    Examples belong on the individual responses, via `error_response` below.
     """
 
     detail: str = Field(description="Human-readable explanation of the failure.")
 
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Team not found"}})
+
+def error_response(description: str, detail: str) -> dict[str, Any]:
+    """Declare one error response with the message that route actually raises.
+
+    Keeps the example next to the code that produces it, so Swagger shows the
+    real string rather than one borrowed from an unrelated endpoint.
+    """
+    return {
+        "model": ErrorResponse,
+        "description": description,
+        "content": {"application/json": {"example": {"detail": detail}}},
+    }
 
 
 class PokemonStats(BaseModel):

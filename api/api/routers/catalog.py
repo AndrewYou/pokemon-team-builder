@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from api.dependencies import SessionDep
-from api.schemas import ErrorResponse, PokemonDetail, PokemonPage, TypeName
+from api.schemas import PokemonDetail, PokemonPage, TypeName, error_response
 from api.services import catalog as catalog_service
 
 router = APIRouter(prefix="/pokemon", tags=["catalog"])
@@ -38,7 +38,12 @@ class SortOption(enum.StrEnum):
         "`type` matches either type slot. `search` is a case-insensitive prefix "
         "match served by an index."
     ),
-    responses={400: {"model": ErrorResponse, "description": "Malformed cursor."}},
+    responses={
+        400: error_response(
+            "The cursor could not be decoded. Pass back a `next_cursor` verbatim.",
+            "Malformed cursor",
+        )
+    },
 )
 async def list_pokemon(
     response: Response,
@@ -74,7 +79,7 @@ async def list_pokemon(
     response_model=PokemonDetail,
     summary="Get one Pokemon",
     description="Catalog fields plus the full movepool. The raw payload column is never returned.",
-    responses={404: {"model": ErrorResponse, "description": "No Pokemon with that id."}},
+    responses={404: error_response("No Pokemon with that id.", "Pokemon not found")},
 )
 async def get_pokemon(pokemon_id: int, response: Response, session: SessionDep) -> PokemonDetail:
     response.headers["Cache-Control"] = CACHE_CONTROL

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.derived.cache import DerivedCache, build_cache
 
 __all__ = [
+    "CACHE_UNAVAILABLE_DETAIL",
     "DerivedCache",
     "DerivedCacheUnavailable",
     "ensure_built",
@@ -33,6 +34,14 @@ _cache: DerivedCache | None = None
 _lock = asyncio.Lock()
 
 
+# Exported so the routers can document the exact string they will return,
+# rather than a paraphrase that drifts from it.
+CACHE_UNAVAILABLE_DETAIL = (
+    "Derived cache is not built. Seed the database (POST /admin/seed), "
+    "then rebuild with POST /admin/cache/rebuild."
+)
+
+
 class DerivedCacheUnavailable(RuntimeError):
     """The cache has not been built, usually because the tables are empty."""
 
@@ -40,10 +49,7 @@ class DerivedCacheUnavailable(RuntimeError):
 def get_cache() -> DerivedCache:
     """Return the current cache, or explain why there isn't one."""
     if _cache is None:
-        raise DerivedCacheUnavailable(
-            "Derived cache is not built. Seed the database (POST /admin/seed), "
-            "then rebuild with POST /admin/cache/rebuild."
-        )
+        raise DerivedCacheUnavailable(CACHE_UNAVAILABLE_DETAIL)
     return _cache
 
 

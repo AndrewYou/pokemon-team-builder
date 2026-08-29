@@ -14,7 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 
 from api.dependencies import SessionDep
 from api.models import JobKind
-from api.schemas import ErrorResponse, JobAccepted
+from api.schemas import JobAccepted, error_response
 from api.security import verify_admin_or_cron
 from api.services import jobs as job_service
 from api.services import sync_service
@@ -23,7 +23,12 @@ router = APIRouter(
     prefix="/admin",
     tags=["admin"],
     dependencies=[Depends(verify_admin_or_cron)],
-    responses={401: {"model": ErrorResponse, "description": "No valid credential."}},
+    responses={
+        401: error_response(
+            "Neither HTTP Basic credentials nor a valid X-Cron-Secret header was supplied.",
+            "Provide admin credentials or a valid X-Cron-Secret header",
+        )
+    },
 )
 
 
@@ -58,7 +63,12 @@ class SyncSourceOption(enum.StrEnum):
         "find exactly zero changes.\\n\\n"
         "Returns 409 if a sync is already running."
     ),
-    responses={409: {"model": ErrorResponse, "description": "A sync is already running."}},
+    responses={
+        409: error_response(
+            "A sync is already in flight. Poll its job rather than starting a second crawl.",
+            "A sync job is already running",
+        )
+    },
 )
 async def start_sync(
     background: BackgroundTasks,

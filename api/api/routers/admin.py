@@ -20,7 +20,6 @@ from api.schemas import (
     DeriveTypesResponse,
     DeterminismCheckResponse,
     DriftResponse,
-    ErrorResponse,
     ExplainResponse,
     JobAccepted,
     JobRead,
@@ -31,8 +30,9 @@ from api.schemas import (
     StatsResponse,
     TypeName,
     VectorResponse,
+    error_response,
 )
-from api.security import verify_admin
+from api.security import ADMIN_UNAUTHORIZED_DETAIL, verify_admin
 from api.services import derive as derive_service
 from api.services import explain as explain_service
 from api.services import jobs as job_service
@@ -43,7 +43,12 @@ router = APIRouter(
     prefix="/admin",
     tags=["admin"],
     dependencies=[Depends(verify_admin)],
-    responses={401: {"description": "Missing or invalid admin credentials."}},
+    responses={
+        401: error_response(
+            "Missing or invalid admin credentials. Defaults are admin / pokemon.",
+            ADMIN_UNAUTHORIZED_DETAIL,
+        )
+    },
 )
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -68,7 +73,12 @@ class SeedSource(enum.StrEnum):
         "Returns 202 immediately; poll the returned `poll_url` for progress. "
         "Returns 409 if a seed is already running."
     ),
-    responses={409: {"description": "A seed job is already running."}},
+    responses={
+        409: error_response(
+            "A seed is already in flight. Poll its job rather than starting a second one.",
+            "A seed job is already running",
+        )
+    },
 )
 async def start_seed(
     background: BackgroundTasks,
@@ -105,7 +115,7 @@ async def list_jobs(
     response_model=JobRead,
     summary="Get one job",
     description="Full state of a single job, including row counts or the failure text.",
-    responses={404: {"description": "No job with that id."}},
+    responses={404: error_response("No job with that id.", "Job not found")},
 )
 async def get_job(job_id: uuid.UUID, session: SessionDep) -> JobRead:
     job = await job_service.get_job(session, job_id)
@@ -171,6 +181,14 @@ def require_cache() -> registry.DerivedCache:
         "Invalidates the derived cache, since the effectiveness data changed "
         "underneath it."
     ),
+    responses={
+        422: error_response(
+            "The parsed chart does not match the known one, so it was not stored.",
+            "multiplier distribution {'0': 8, '0.5': 60, '1': 204, '2': 52} does not match "
+            "the known chart {'0': 8, '0.5': 61, '1': 204, '2': 51}. A mismatch usually "
+            "means past_damage_relations was read instead of damage_relations.",
+        )
+    },
 )
 async def derive_types(
     session: SessionDep,
@@ -209,7 +227,13 @@ async def rebuild_cache(session: SessionDep) -> CacheRebuildResponse:
         "Try `attacking_type=rock`, `pokemon_id=6`: Charizard is fire/flying, and "
         "rock is super effective against both, so 2 x 2 = 4."
     ),
-    responses={404: {"description": "No Pokemon with that id."}},
+    responses={
+        404: error_response("No Pokemon with that id.", "Pokemon not found"),
+        503: error_response(
+            "The derived cache is not built, or the type chart is incomplete.",
+            registry.CACHE_UNAVAILABLE_DETAIL,
+        ),
+    },
 )
 async def debug_matchup(
     session: SessionDep,
@@ -242,7 +266,13 @@ async def debug_matchup(
         "The row this Pokemon occupies in the defensive matrix, with dual typing "
         "already multiplied in."
     ),
-    responses={404: {"description": "No Pokemon with that id."}},
+    responses={
+        404: error_response("No Pokemon with that id.", "Pokemon not found"),
+        503: error_response(
+            "The derived cache is not built, or the type chart is incomplete.",
+            registry.CACHE_UNAVAILABLE_DETAIL,
+        ),
+    },
 )
 async def debug_vector(pokemon_id: int, session: SessionDep) -> VectorResponse:
     cache = require_cache()
@@ -280,7 +310,7 @@ async def debug_vector(pokemon_id: int, session: SessionDep) -> VectorResponse:
         "`dropped_fields` lists exactly what was discarded, and `hashes_match` "
         "compares a fresh computation against what the database stored."
     ),
-    responses={404: {"description": "No Pokemon with that id."}},
+    responses={404: error_response("No Pokemon with that id.", "Pokemon not found")},
 )
 async def debug_normalize(pokemon_id: int, session: SessionDep) -> NormalizeDebugResponse:
     result = await normalization_service.normalize_debug(session, pokemon_id)
@@ -393,7 +423,12 @@ async def get_drift(session: SessionDep) -> DriftResponse:
         "the UI.\n\n"
         "No reset endpoint is needed: the sync restores the true values."
     ),
-    responses={422: {"model": ErrorResponse, "description": "Unknown Pokemon ids."}},
+    responses={
+        422: error_response(
+            "One or more requested Pokemon do not exist.",
+            "Unknown Pokemon ids: [99999].",
+        )
+    },
 )
 async def simulate_change(
     payload: SimulateChangeRequest, session: SessionDep

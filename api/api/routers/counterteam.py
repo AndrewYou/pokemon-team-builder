@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
+from api.derived import registry
 from api.routers.admin import require_cache
-from api.schemas import CounterTeamRequest, CounterTeamResponse, ErrorResponse
+from api.schemas import CounterTeamRequest, CounterTeamResponse, error_response
 from api.services import counterteam as counter_service
 
 router = APIRouter(prefix="/counter-team", tags=["counter-team"])
@@ -31,8 +32,14 @@ MAX_ENEMIES = 6
         "in-memory derived cache."
     ),
     responses={
-        422: {"model": ErrorResponse, "description": "Unknown or invalid team."},
-        503: {"model": ErrorResponse, "description": "Derived cache is not built."},
+        422: error_response(
+            "Empty team, more than six Pokemon, or an id that does not exist.",
+            "Unknown Pokemon ids: [99999].",
+        ),
+        503: error_response(
+            "The derived cache has not been built, so no matchup can be scored.",
+            registry.CACHE_UNAVAILABLE_DETAIL,
+        ),
     },
 )
 async def counter_team(payload: CounterTeamRequest) -> CounterTeamResponse:
