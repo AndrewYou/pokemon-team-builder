@@ -5,12 +5,20 @@ here is load-bearing rather than decoration: the tag groups below are what give
 /docs a readable shape as later phases add routers.
 """
 
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from api.config import settings
+from api.db import SessionLocal
+from api.derived import registry
 from api.routers import admin, health
+
+logger = logging.getLogger(__name__)
 
 DESCRIPTION = """
 A Pokemon team builder over a local snapshot of [PokeAPI](https://pokeapi.co).
@@ -67,12 +75,28 @@ OPENAPI_TAGS = [
     },
 ]
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Build the derived layer once, at startup.
+
+    Failure is tolerated on purpose. A fresh deployment has an empty database,
+    and refusing to start would make the API unbrowsable exactly when someone is
+    trying to seed it. The endpoints that need the cache answer 503 with the two
+    calls that fix it.
+    """
+    async with SessionLocal() as session:
+        await registry.ensure_built(session)
+    yield
+
+
 app = FastAPI(
     title="Pokémon Team Builder API",
     version="0.1.0",
     description=DESCRIPTION,
     openapi_tags=OPENAPI_TAGS,
     contact={"name": "Source", "url": "https://github.com/AndrewYou/pokemon-team-builder"},
+    lifespan=lifespan,
 )
 
 # allow_credentials is False, so the wildcard default is legal: the browser will

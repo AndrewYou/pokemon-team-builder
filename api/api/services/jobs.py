@@ -38,6 +38,7 @@ from api.models import (
     TypeChart,
 )
 from api.schemas import DataQuality, StatsResponse
+from api.services import derive as derive_service
 
 # Order chosen to read top-down in the Swagger response: reference data first,
 # then user data, then operational tables.
@@ -191,4 +192,9 @@ async def collect_stats(session: AsyncSession) -> StatsResponse:
         pokemon_missing_raw=int(missing_raw or 0),
         ok=not (missing_sprite_or_type or missing_raw),
     )
-    return StatsResponse(counts=counts, data_quality=quality)
+    return StatsResponse(
+        counts=counts,
+        data_quality=quality,
+        type_chart=await derive_service.type_chart_health(session),
+        derived=derive_service.derived_cache_health(),
+    )

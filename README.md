@@ -76,6 +76,49 @@ cheaper than noticing it during a demo. Two of the three conditions are
 currently impossible by construction -- `type1` and `raw` are `NOT NULL` -- so
 they guard against schema drift rather than against today's data.
 
+## Derived layer
+
+Type lookups, defensive vectors, and later the best-move lists are computed at
+startup and held in memory. They are never materialised as tables.
+
+A defensive vector is 18 floats: how a Pokemon takes damage from each attacking
+type, with dual typing already multiplied in. Charizard (fire/flying) takes
+`2.0 * 2.0 = 4.0` from rock and `0.5 * 0.5 = 0.25` from grass. Immunity wins
+outright, so ground is `2.0 * 0.0 = 0.0` despite fire's weakness to it. They are
+stored as a single numpy array of shape `[pokemon, 18]` with a
+`pokemon_id -> row` map, so scoring a whole catalog later is one vectorised
+operation rather than a Python loop.
+
+```
+POST /admin/derive-types     write the 324-row chart, returns the distribution
+POST /admin/cache/rebuild    recompute the derived layer, returns timing
+GET  /admin/debug/matchup    ?attacking_type=rock&pokemon_id=6 -> 4.0, explained
+GET  /admin/debug/vector/6   all 18 multipliers for one Pokemon
+```
+
+`GET /admin/stats` reports the chart's multiplier distribution and an
+`all_values_legal` flag, so the health of this whole phase is one call.
+
+### Single worker, by design
+
+The cache is a module-level singleton in process memory. Under multiple uvicorn
+workers each process would hold its own copy, and `invalidate()` would only
+affect the process that served the request, leaving the others silently stale.
+The container therefore runs **one worker** -- uvicorn's default, with no
+`--workers` flag in the Dockerfile.
+
+Scaling out would mean giving up the pure in-memory approach: write a version
+stamp in Postgres when reference data changes and have each worker re-check it
+on a cheap interval, rebuilding when it moves.
+
+### An incomplete chart refuses to serve
+
+`build_chart` fills unlisted pairings with 1.0, which is right when PokeAPI
+omits an exception but wrong if the table is empty -- every matchup would return
+a confident, neutral, incorrect 1.0. The cache tracks how many rows it actually
+loaded, and the debug endpoints answer 503 with the two calls that fix it rather
+than serving from a defaulted chart.
+
 ## Seeding
 
 All `make` targets live in `api/` and run from there:
