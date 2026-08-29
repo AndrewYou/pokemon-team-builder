@@ -17,9 +17,11 @@ from api.models import JobKind
 from api.schemas import (
     CacheRebuildResponse,
     DeriveTypesResponse,
+    DeterminismCheckResponse,
     JobAccepted,
     JobRead,
     MatchupResponse,
+    NormalizeDebugResponse,
     StatsResponse,
     TypeName,
     VectorResponse,
@@ -27,6 +29,7 @@ from api.schemas import (
 from api.security import verify_admin
 from api.services import derive as derive_service
 from api.services import jobs as job_service
+from api.services import normalization as normalization_service
 
 router = APIRouter(
     prefix="/admin",
@@ -255,3 +258,41 @@ async def debug_vector(pokemon_id: int, session: SessionDep) -> VectorResponse:
         types=[t for t in (type1, type2) if t],
         multipliers=multipliers,
     )
+
+
+@router.get(
+    "/debug/normalize/{pokemon_id}",
+    response_model=NormalizeDebugResponse,
+    summary="Show a payload beside its normalised projection",
+    description=(
+        "Normalisation projects a raw payload down to the fields we actually "
+        "consume and orders every array deterministically. Without it, hashing "
+        "reports a change on every run: PokeAPI does not guarantee array "
+        "ordering, and most of the payload is data we never read.\n\n"
+        "`dropped_fields` lists exactly what was discarded, and `hashes_match` "
+        "compares a fresh computation against what the database stored."
+    ),
+    responses={404: {"description": "No Pokemon with that id."}},
+)
+async def debug_normalize(pokemon_id: int, session: SessionDep) -> NormalizeDebugResponse:
+    result = await normalization_service.normalize_debug(session, pokemon_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pokemon not found")
+    return result
+
+
+@router.post(
+    "/debug/determinism-check",
+    response_model=DeterminismCheckResponse,
+    summary="Re-hash every stored Pokemon and compare",
+    description=(
+        "Re-normalises and re-hashes every stored Pokemon, comparing against the "
+        "hashes already in the database.\n\n"
+        "This is the check that protects the change-detection demo. If "
+        "normalisation is not a pure function of the stored payload, the next "
+        "sync reports every Pokemon as changed and the feed becomes noise. "
+        "Any result above zero mismatches is a bug, not a data change."
+    ),
+)
+async def debug_determinism_check(session: SessionDep) -> DeterminismCheckResponse:
+    return await normalization_service.determinism_check(session)

@@ -338,3 +338,87 @@ class StatsResponse(BaseModel):
             }
         }
     )
+
+
+class NormalizeDebugResponse(BaseModel):
+    """A raw payload and its projection, side by side."""
+
+    pokemon_id: int
+    pokemon_name: str
+    raw_field_count: int = Field(description="Top-level keys in the stored payload.")
+    normalized_field_count: int = Field(description="Keys surviving the projection.")
+    dropped_fields: list[str] = Field(
+        description="Top-level keys discarded as unconsumed. Changes to these "
+        "must never appear in the change feed."
+    )
+    normalized: dict[str, Any] = Field(description="The projection that is hashed and diffed.")
+    section_hashes: dict[str, str] = Field(description="Recomputed from the payload right now.")
+    stored_hashes: dict[str, str] = Field(description="What the database holds.")
+    hashes_match: bool = Field(
+        description="False means the stored hash disagrees with a fresh computation, "
+        "which would make every sync report this Pokemon as changed."
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "pokemon_id": 6,
+                "pokemon_name": "charizard",
+                "raw_field_count": 14,
+                "normalized_field_count": 10,
+                "dropped_fields": ["base_experience", "order", "species"],
+                "normalized": {
+                    "id": 6,
+                    "name": "charizard",
+                    "types": ["fire", "flying"],
+                    "stats": {"attack": 84, "hp": 78},
+                    "moves": [10, 19, 53],
+                    "sprite": "https://img/6.png",
+                },
+                "section_hashes": {"stats_hash": "6b86b273...", "types_hash": "d4735e3a..."},
+                "stored_hashes": {"stats_hash": "6b86b273...", "types_hash": "d4735e3a..."},
+                "hashes_match": True,
+            }
+        }
+    )
+
+
+class DeterminismMismatch(BaseModel):
+    """One stored hash that disagrees with a fresh computation."""
+
+    pokemon_id: int
+    pokemon_name: str
+    section: str
+    stored_hash: str
+    recomputed_hash: str
+
+
+class DeterminismCheckResponse(BaseModel):
+    """Result of re-hashing every stored Pokemon.
+
+    This is the check that protects the whole change-detection demo. If
+    normalisation is not deterministic, the next sync reports every Pokemon as
+    changed and the feed becomes noise.
+    """
+
+    checked: int = Field(description="Pokemon re-normalised and re-hashed.")
+    sections_checked: int = Field(description="Individual hashes compared.")
+    mismatches: int = Field(description="Hashes that disagreed. Anything above 0 is a bug.")
+    mismatch_samples: list[DeterminismMismatch] = Field(
+        description="Up to 10 examples, for diagnosis."
+    )
+    duration_ms: float
+    ok: bool = Field(description="True when nothing mismatched.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "checked": 1025,
+                "sections_checked": 4100,
+                "mismatches": 0,
+                "mismatch_samples": [],
+                "duration_ms": 412.5,
+                "ok": True,
+            }
+        }
+    )

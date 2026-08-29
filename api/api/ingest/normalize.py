@@ -8,10 +8,11 @@ canonicalised (keys sorted, lists ordered) before it is digested.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from decimal import Decimal
 from typing import Any
+
+from api.sync import hashing
+from api.sync import normalize as sync_normalize
 
 # The 18 battle types, as an ALLOWLIST rather than a blocklist of the entries we
 # happen to know about. /type already returns more than 18 -- `unknown` (10001),
@@ -101,10 +102,11 @@ _MOVE_DROP = frozenset(
 )
 
 
-def digest(value: Any) -> str:
-    """Stable sha256 of any JSON-serialisable structure."""
-    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+# Re-exported so existing callers keep working. The single definition lives in
+# api/sync/hashing.py: the seed writes these hashes and the sync job compares
+# against them, so two implementations would drift and every row would look
+# changed.
+digest = hashing.digest
 
 
 def id_from_url(url: str) -> int:
@@ -150,20 +152,19 @@ def trim_type(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def stats_hash(payload: dict[str, Any]) -> str:
-    return digest({s["stat"]["name"]: s["base_stat"] for s in payload.get("stats", [])})
+    return hashing.section_hash(sync_normalize.normalize_pokemon(payload), "stats")
 
 
 def types_hash(payload: dict[str, Any]) -> str:
-    return digest(type_names(payload))
+    return hashing.section_hash(sync_normalize.normalize_pokemon(payload), "types")
 
 
 def moves_hash(payload: dict[str, Any]) -> str:
-    return digest(sorted(move_ids(payload)))
+    return hashing.section_hash(sync_normalize.normalize_pokemon(payload), "moves")
 
 
 def sprite_hash(payload: dict[str, Any]) -> str:
-    sprites = payload.get("sprites") or {}
-    return digest(sprites.get("front_default"))
+    return hashing.section_hash(sync_normalize.normalize_pokemon(payload), "sprite")
 
 
 def move_content_hash(payload: dict[str, Any]) -> str:
@@ -211,10 +212,8 @@ def pokemon_row(payload: dict[str, Any]) -> dict[str, Any]:
         "weight": payload["weight"],
         "is_default": payload["is_default"],
         "raw": trim_pokemon(payload),
-        "stats_hash": stats_hash(payload),
-        "types_hash": types_hash(payload),
-        "moves_hash": moves_hash(payload),
-        "sprite_hash": sprite_hash(payload),
+        # Normalised once and hashed four times, rather than normalised per hash.
+        **hashing.section_hashes(sync_normalize.normalize_pokemon(payload)),
     }
     for api_name, column in _STAT_COLUMNS.items():
         row[column] = stats[api_name]

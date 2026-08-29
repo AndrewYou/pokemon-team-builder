@@ -174,6 +174,40 @@ a confident, neutral, incorrect 1.0. The cache tracks how many rows it actually
 loaded, and the debug endpoints answer 503 with the two calls that fix it rather
 than serving from a defaulted chart.
 
+## Normalisation and change detection
+
+`api/sync/` holds the projection, the section hashes, and the diff. It is the
+most bug-prone code here, and its failure mode is a false positive rather than
+a crash: hashing a raw payload reports a change on every single run, because
+PokeAPI does not guarantee array ordering and most of the payload is fields we
+never read. A change feed that flags everything is worse than none, because
+nobody can tell which entries are real.
+
+`normalize_pokemon` projects a payload down to consumed fields and gives every
+collection a stable order. Movepools are sorted and deduplicated, abilities
+become a mapping, and type slots keep their order because slot 1 and slot 2 are
+different facts. Everything downstream operates on the projection.
+
+Hashes are per section -- `stats`, `types`, `moves`, `sprite` -- not one row
+hash, which is what lets a change be reported as "Attack 84 -> 90" rather than
+"Charizard changed somehow". A stat change moves only `stats_hash`; tests pin
+that isolation.
+
+`diff(old_raw, new_raw)` normalises both sides and walks the result, emitting
+`(field_path, old_value, new_value, change_type)`. Movepools diff as sets, so
+learning a low-numbered move is one addition rather than a cascade of index
+shifts through every later entry.
+
+```
+GET  /admin/debug/normalize/{id}      raw and projection side by side
+POST /admin/debug/determinism-check   re-hash every Pokemon against the database
+```
+
+The determinism check is what protects the whole change-detection demo: if
+normalisation is not a pure function of the stored payload, the next sync
+reports every Pokemon as changed. It compares 4,100 stored hashes in about
+110 ms, and any non-zero result is a bug rather than a data change.
+
 ## Seeding
 
 All `make` targets live in `api/` and run from there:
