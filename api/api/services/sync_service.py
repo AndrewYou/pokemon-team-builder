@@ -198,6 +198,14 @@ async def simulate_change(
     if missing:
         raise ValueError(f"Unknown Pokemon ids: {missing}.")
 
+    # The true upstream payloads. Read from the fixture rather than from what we
+    # store, because a previous simulate-change may already have diverged the
+    # stored copy -- and reporting our own earlier mutation as the upstream value
+    # predicts an alert the sync will never produce.
+    reference = {
+        payload["id"]: payload for payload in (await FixtureSource().fetch_pokemon()).items
+    }
+
     addable = [
         (row.id, row.name)
         for row in (
@@ -217,7 +225,13 @@ async def simulate_change(
         chosen_groups = groups or [rng.choice(list(MutationField))]
 
         mutated_raw, mutations = simulate.mutate_payload(
-            row.raw, row.name, chosen_groups, request.mutations_per_field, rng, addable
+            row.raw,
+            row.name,
+            chosen_groups,
+            request.mutations_per_field,
+            rng,
+            addable,
+            reference=reference.get(pokemon_id),
         )
         if not mutations:
             continue

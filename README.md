@@ -301,6 +301,12 @@ It cannot touch PokeAPI; upstream is read-only to us. It edits our stored copy
 so the next sync has something real to find, and the sync then writes the true
 values back -- which is why there is no reset endpoint.
 
+Predictions are made against the *true upstream* payload, not against what we
+currently hold. Run `simulate-change` twice without syncing and the second call
+would otherwise report the first call's mutation as the upstream value, and
+predict an alert the sync never produces. Only the latest mutation of a given
+field survives, so only the latest prediction for it holds.
+
 **The inversion catches everyone.** If Attack is 55 upstream and we mutate our
 copy to 71, the sync reports 71 -> 55: `old_value` is what we mutated to,
 `new_value` is the truth.

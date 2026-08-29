@@ -224,3 +224,95 @@ class TestInversion:
         change = diff(mutated, payload)[0]
         assert change.old_value == str(mutations[0].mutated_to)
         assert change.new_value == str(mutations[0].upstream_value)
+
+
+class TestRepeatedMutation:
+    """simulate-change may run several times before a sync.
+
+    The reported `upstream_value` has to come from the reference payload, not
+    from what we currently hold. Reading it from our own already-mutated copy
+    predicts an alert the sync will never produce -- which breaks the one thing
+    the endpoint is for, since the demo turns on comparing the prediction
+    against the alert word for word.
+    """
+
+    def test_second_run_reports_the_true_upstream_value(self, payload: dict[str, Any]) -> None:
+        reference = copy.deepcopy(payload)
+        rng = random.Random(7)
+
+        once, first = mutate_payload(
+            payload, payload["name"], [MutationField.stats], 6, rng, ADDABLE, reference=reference
+        )
+        twice, second = mutate_payload(
+            once, payload["name"], [MutationField.stats], 6, rng, ADDABLE, reference=reference
+        )
+
+        upstream_by_path = {m.field_path: m.upstream_value for m in first}
+        for mutation in second:
+            assert mutation.upstream_value == upstream_by_path[mutation.field_path], (
+                f"{mutation.field_path} reported our own mutation as upstream"
+            )
+
+    def test_the_latest_prediction_matches_what_a_diff_would_find(
+        self, payload: dict[str, Any]
+    ) -> None:
+        """The end state versus the truth is what the sync compares."""
+        reference = copy.deepcopy(payload)
+        rng = random.Random(11)
+
+        once, _ = mutate_payload(
+            payload, payload["name"], [MutationField.stats], 3, rng, ADDABLE, reference=reference
+        )
+        twice, second = mutate_payload(
+            once, payload["name"], [MutationField.stats], 3, rng, ADDABLE, reference=reference
+        )
+
+        changes = {c.field_path: (c.old_value, c.new_value) for c in diff(twice, reference)}
+        for mutation in second:
+            old, new = changes[mutation.field_path]
+            assert old == str(mutation.mutated_to)
+            assert new == str(mutation.upstream_value)
+
+    def test_sprite_markers_do_not_stack(self, payload: dict[str, Any]) -> None:
+        """Built from the true URL each time, so a second run does not report an
+        already-marked URL as though upstream had served it."""
+        reference = copy.deepcopy(payload)
+        rng = random.Random(3)
+        once, first = mutate_payload(
+            payload, payload["name"], [MutationField.sprite], 1, rng, ADDABLE, reference=reference
+        )
+        _, second = mutate_payload(
+            once, payload["name"], [MutationField.sprite], 1, rng, ADDABLE, reference=reference
+        )
+        assert first[0].upstream_value == second[0].upstream_value
+        assert second[0].upstream_value == reference["sprites"]["front_default"]
+
+    def test_moves_are_only_removed_if_upstream_has_them(self, payload: dict[str, Any]) -> None:
+        """Removing a move a previous run added would cancel out, producing a
+        mutation the sync cannot report."""
+        reference = copy.deepcopy(payload)
+        rng = random.Random(5)
+        once, _ = mutate_payload(
+            payload, payload["name"], [MutationField.moves], 4, rng, ADDABLE, reference=reference
+        )
+        _, second = mutate_payload(
+            once, payload["name"], [MutationField.moves], 4, rng, ADDABLE, reference=reference
+        )
+        upstream_ids = {
+            int(e["move"]["url"].rstrip("/").rsplit("/", 1)[1]) for e in reference["moves"]
+        }
+        for mutation in second:
+            move_id = int(mutation.field_path[6:-1])
+            if mutation.mutated_to is None:
+                assert move_id in upstream_ids, "removed a move upstream never had"
+            else:
+                assert move_id not in upstream_ids, "added a move upstream already has"
+
+    def test_defaults_to_the_payload_when_no_reference_is_given(
+        self, payload: dict[str, Any]
+    ) -> None:
+        """A caller holding a clean snapshot need not pass one."""
+        _, mutations = mutate_payload(
+            payload, payload["name"], [MutationField.stats], 1, random.Random(1), ADDABLE
+        )
+        assert mutations
