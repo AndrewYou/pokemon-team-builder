@@ -15,6 +15,7 @@ from api.derived import registry
 from api.derived.typechart import TYPE_INDEX, defensive_multiplier, explain, matchup
 from api.models import JobKind
 from api.schemas import (
+    AgedChangeResponse,
     CacheRebuildResponse,
     ChangeRead,
     DeriveTypesResponse,
@@ -35,6 +36,7 @@ from api.schemas import (
     error_response,
 )
 from api.security import ADMIN_UNAUTHORIZED_DETAIL, verify_admin
+from api.services import alerts as alert_service
 from api.services import derive as derive_service
 from api.services import explain as explain_service
 from api.services import jobs as job_service
@@ -516,3 +518,28 @@ async def reset_demo(
             detail="Teams are never deleted by this endpoint; omit keep_teams or pass true.",
         )
     return await sync_service.reset_demo(session, restore_snapshot=restore_snapshot)
+
+
+@router.post(
+    "/age-change/{change_id}",
+    response_model=AgedChangeResponse,
+    summary="Backdate a change so the alert window is demonstrable",
+    description=(
+        "Moves a change's `detected_at` backwards so it falls outside the "
+        f"{alert_service.WINDOW_DAYS}-day window `GET /alerts` looks at.\n\n"
+        "Demo affordance only. Without it, showing that old changes drop out of "
+        "the feed would mean waiting a week. Age a change past the window and it "
+        "disappears from /alerts while remaining in /admin/changes, which is the "
+        "distinction between what is news and what is history."
+    ),
+    responses={404: error_response("No change with that id.", "Change not found")},
+)
+async def age_change(
+    change_id: int,
+    session: SessionDep,
+    days: Annotated[int, Query(ge=1, le=3650, description="How many days to move it back.")] = 8,
+) -> AgedChangeResponse:
+    result = await alert_service.age_change(session, change_id, days)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Change not found")
+    return result

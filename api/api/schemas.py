@@ -1104,3 +1104,166 @@ class ResetDemoResponse(BaseModel):
             }
         }
     )
+
+
+# --- Alerts -----------------------------------------------------------------
+
+
+class AffectedTeam(BaseModel):
+    """One of the caller's teams containing the changed Pokemon."""
+
+    team_id: int
+    team_name: str
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"team_id": 1, "team_name": "Kanto classics"}}
+    )
+
+
+class AlertChange(BaseModel):
+    """One change, described the way a player would say it."""
+
+    change_id: int = Field(description="Pass to /alerts/{change_id}/dismiss.")
+    field_path: str
+    old_value: str | None = Field(description="What our snapshot held before the sync.")
+    new_value: str | None = Field(description="What upstream reports now.")
+    message: str = Field(description="The sentence to show. Never a raw diff.")
+    detected_at: datetime.datetime
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "change_id": 41,
+                "field_path": "stats.attack",
+                "old_value": "55",
+                "new_value": "60",
+                "message": "Pikachu's Attack changed from 55 to 60",
+                "detected_at": "2026-08-29T14:05:08Z",
+            }
+        }
+    )
+
+
+class AlertGroup(BaseModel):
+    """Everything that changed about one Pokemon, and where it sits."""
+
+    pokemon_id: int
+    pokemon_name: str
+    sprite_url: str | None
+    affected_teams: list[AffectedTeam] = Field(
+        description="Which of your teams contain this Pokemon."
+    )
+    changes: list[AlertChange]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "pokemon_id": 25,
+                "pokemon_name": "pikachu",
+                "sprite_url": "https://img/25.png",
+                "affected_teams": [
+                    {"team_id": 1, "team_name": "Kanto classics"},
+                    {"team_id": 4, "team_name": "Speed run"},
+                ],
+                "changes": [
+                    {
+                        "change_id": 41,
+                        "field_path": "stats.attack",
+                        "old_value": "55",
+                        "new_value": "60",
+                        "message": "Pikachu's Attack changed from 55 to 60",
+                        "detected_at": "2026-08-29T14:05:08Z",
+                    },
+                    {
+                        "change_id": 42,
+                        "field_path": "types[0]",
+                        "old_value": "electric",
+                        "new_value": "ghost",
+                        "message": "Pikachu's primary type changed from electric to ghost",
+                        "detected_at": "2026-08-29T14:05:08Z",
+                    },
+                ],
+            }
+        }
+    )
+
+
+class AlertsResponse(BaseModel):
+    """Undismissed changes affecting the caller's teams, grouped by Pokemon."""
+
+    window_days: int = Field(description="How far back the feed looks.")
+    total_changes: int
+    affected_pokemon: int
+    groups: list[AlertGroup]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "window_days": 7,
+                "total_changes": 2,
+                "affected_pokemon": 1,
+                "groups": [
+                    {
+                        "pokemon_id": 25,
+                        "pokemon_name": "pikachu",
+                        "sprite_url": "https://img/25.png",
+                        "affected_teams": [{"team_id": 1, "team_name": "Kanto classics"}],
+                        "changes": [
+                            {
+                                "change_id": 41,
+                                "field_path": "stats.attack",
+                                "old_value": "55",
+                                "new_value": "60",
+                                "message": "Pikachu's Attack changed from 55 to 60",
+                                "detected_at": "2026-08-29T14:05:08Z",
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+    )
+
+
+class DismissResponse(BaseModel):
+    """Result of dismissing one change."""
+
+    change_id: int
+    acknowledged_at: datetime.datetime
+    already_dismissed: bool = Field(
+        description="True when it was already dismissed. Re-dismissing is a 200, not an error."
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "change_id": 41,
+                "acknowledged_at": "2026-08-29T14:10:00Z",
+                "already_dismissed": False,
+            }
+        }
+    )
+
+
+class AgedChangeResponse(BaseModel):
+    """Result of backdating a change, so the alert window is demonstrable."""
+
+    change_id: int
+    days: int
+    detected_at_before: datetime.datetime
+    detected_at_after: datetime.datetime
+    still_in_window: bool = Field(
+        description="False once the change has been aged out of the 7-day feed."
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "change_id": 41,
+                "days": 8,
+                "detected_at_before": "2026-08-29T14:05:08Z",
+                "detected_at_after": "2026-08-21T14:05:08Z",
+                "still_in_window": False,
+            }
+        }
+    )

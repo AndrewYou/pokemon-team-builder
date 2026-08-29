@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse
 from api.config import settings
 from api.db import SessionLocal
 from api.derived import registry
-from api.routers import admin, catalog, counterteam, health, sync, teams
+from api.routers import admin, alerts, catalog, counterteam, health, sync, teams
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,7 @@ app.include_router(health.router)
 app.include_router(catalog.router)
 app.include_router(teams.router)
 app.include_router(counterteam.router)
+app.include_router(alerts.router)
 app.include_router(sync.router)
 app.include_router(admin.router)
 

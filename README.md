@@ -174,6 +174,29 @@ a confident, neutral, incorrect 1.0. The cache tracks how many rows it actually
 loaded, and the debug endpoints answer 503 with the two calls that fix it rather
 than serving from a defaulted chart.
 
+## Alerts
+
+`GET /alerts` answers one question: what changed upstream that affects a team I
+built? Changes from the last 7 days, on Pokemon in the caller's teams, minus
+anything they have dismissed.
+
+Grouped by Pokemon, because the join multiplies: a change to a Pokemon sitting
+on three of your teams comes back as three rows, and showing that alert three
+times would be the obvious bug. One group names all three teams.
+
+Descriptions are sentences rather than diffs -- "Pikachu's Attack changed from
+55 to 60" -- rendered by the same function the simulator uses to predict them.
+
+`POST /alerts/{id}/dismiss` is idempotent. Re-dismissing answers 200 with the
+original timestamp rather than failing on the composite key: a client retrying a
+request it already made has not done anything wrong. Dismissals are per user, so
+silencing an alert silences it for you alone.
+
+Aging out is not deletion. `POST /admin/age-change/{id}?days=8` backdates a
+change so the window can be demonstrated without waiting a week: it leaves
+`/alerts` while remaining in `/admin/changes`, which is the line between news
+and history.
+
 ## Identity: a header, and why that is enough
 
 There is no login. A client sends `X-User-Id`, an opaque UUID, and owns whatever
