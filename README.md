@@ -254,6 +254,18 @@ Or from Swagger, in four calls:
 **0 changes found** is the evidence that this detects changes rather than
 inventing them, so both outcomes appear in its response examples.
 
+`POST /admin/reset-demo` clears `change_ack`, `data_change`, and `sync_run` in
+one transaction so the sequence can be rehearsed without earlier runs piling up.
+Add `restore_snapshot=true` to also run a fixture seed, clearing any outstanding
+drift in the same call -- a seed rather than a sync, because a sync would write a
+fresh run and a change per repair, which is the noise being removed. **Teams are
+never deleted**, whatever the parameters say.
+
+It deletes rather than truncates. `TRUNCATE` does not follow `ON DELETE CASCADE`
+and refuses outright while `change_ack` references `data_change`. Children are
+deleted first for a second reason: removing `data_change` first would cascade the
+acks away silently and report zero for a table that had rows in it.
+
 Every operational read sits behind the same admin gate. Sync runs are global
 system state -- there is no per-user scoping on `sync_run` -- so splitting the
 aggregate out as public while keeping the field-level detail in `/admin/changes`

@@ -1074,3 +1074,33 @@ class SimulateChangeResponse(BaseModel):
             }
         }
     )
+
+
+class ResetDemoDeleted(BaseModel):
+    """Rows removed, per table."""
+
+    change_ack: int
+    data_change: int
+    sync_run: int
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"change_ack": 0, "data_change": 14, "sync_run": 8}}
+    )
+
+
+class ResetDemoResponse(BaseModel):
+    """What the reset cleared, and whether the snapshot was restored."""
+
+    deleted: ResetDemoDeleted
+    snapshot_restored: bool = Field(
+        description="True when a fixture seed ran, clearing any outstanding drift."
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "deleted": {"change_ack": 0, "data_change": 14, "sync_run": 8},
+                "snapshot_restored": True,
+            }
+        }
+    )

@@ -25,6 +25,7 @@ from api.schemas import (
     JobRead,
     MatchupResponse,
     NormalizeDebugResponse,
+    ResetDemoResponse,
     SimulateChangeRequest,
     SimulateChangeResponse,
     StatsResponse,
@@ -461,3 +462,57 @@ async def list_sync_runs(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[SyncRunRead]:
     return await sync_service.list_sync_runs(session, limit)
+
+
+@router.post(
+    "/reset-demo",
+    response_model=ResetDemoResponse,
+    summary="Clear change-detection history (DESTRUCTIVE, demo only)",
+    description=(
+        "**Destructive. Demo hygiene only.** Permanently deletes every row from "
+        "`change_ack`, `data_change`, and `sync_run`, in one transaction, so the "
+        "change-detection sequence can be rehearsed repeatedly without earlier "
+        "runs accumulating as noise. There is no undo.\n\n"
+        "**Teams are never deleted.** `team` and `team_member` are untouched "
+        "regardless of parameters -- a reset that wiped the roster you just built "
+        "would make the demo useless.\n\n"
+        "`restore_snapshot=true` additionally runs a fixture seed, which clears any "
+        "outstanding `simulate-change` drift in the same call. A seed rather than a "
+        "sync on purpose: a sync would restore the values but write a fresh "
+        "`sync_run` and a `data_change` for every repair, which is exactly the "
+        "noise this endpoint removes.\n\n"
+        "Rows are deleted rather than truncated. `TRUNCATE` does not follow "
+        "`ON DELETE CASCADE` and refuses while `change_ack` references "
+        "`data_change`; `DELETE` honours the cascade and reports how many rows it "
+        "removed."
+    ),
+    responses={
+        422: error_response(
+            "keep_teams=false was requested. Teams are never deleted by this endpoint.",
+            "Teams are never deleted by this endpoint; omit keep_teams or pass true.",
+        )
+    },
+)
+async def reset_demo(
+    session: SessionDep,
+    restore_snapshot: Annotated[
+        bool,
+        Query(description="Also run a fixture seed, clearing any outstanding drift."),
+    ] = False,
+    keep_teams: Annotated[
+        bool,
+        Query(
+            description=(
+                "Always true. Accepted so the guarantee is visible here rather than "
+                "buried in prose; passing false is rejected rather than silently ignored."
+            )
+        ),
+    ] = True,
+) -> ResetDemoResponse:
+    if not keep_teams:
+        # Refusing beats quietly doing something other than what was asked.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Teams are never deleted by this endpoint; omit keep_teams or pass true.",
+        )
+    return await sync_service.reset_demo(session, restore_snapshot=restore_snapshot)

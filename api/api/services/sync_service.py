@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import uuid
+from typing import Any, cast
 
-from sqlalchemy import desc, select, update
+from sqlalchemy import CursorResult, delete, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import SessionLocal
+from api.derived import registry
 from api.ingest.normalize import pokemon_row
-from api.ingest.sources import FixtureSource
-from api.models import DataChange, Job, JobStatus, Move, Pokemon, SyncRun
+from api.ingest.seed import seed
+from api.ingest.sources import FixtureSource, build_source
+from api.models import ChangeAck, DataChange, Job, JobStatus, Move, Pokemon, SyncRun
 from api.schemas import (
     ChangeRead,
     DriftEntry,
     DriftResponse,
+    ResetDemoDeleted,
+    ResetDemoResponse,
     SimulateChangeRequest,
     SimulateChangeResponse,
     SimulatedMutation,
@@ -28,6 +34,8 @@ from api.sync.hashing import section_hashes
 from api.sync.normalize import HASHED_SECTIONS, normalize_pokemon
 from api.sync.run import run_sync
 from api.sync.simulate import MutationField
+
+logger = logging.getLogger(__name__)
 
 # Move ids offered as additions when simulating a movepool change.
 ADDABLE_MOVE_SAMPLE = 200
@@ -296,3 +304,50 @@ async def run_sync_job(job_id: uuid.UUID, source_name: str) -> None:
             )
         )
         await session.commit()
+
+
+async def reset_demo(session: AsyncSession, *, restore_snapshot: bool = False) -> ResetDemoResponse:
+    """Clear change-detection history so the demo can be rehearsed cleanly.
+
+    Deletes rather than truncates. TRUNCATE does not follow ON DELETE CASCADE
+    and refuses outright while change_ack references data_change; DELETE honours
+    the cascade and, unlike TRUNCATE, reports how many rows it removed.
+
+    Children first, and not only for foreign keys: deleting data_change first
+    would cascade the acks away silently and report zero for a table that had
+    rows in it.
+
+    Teams and their members are never touched. A reset that wiped the roster
+    just built for the demo would defeat the purpose of the demo.
+    """
+    # CursorResult carries rowcount; the base Result type does not, so the
+    # counts are read through an explicit cast rather than assumed.
+    acks = cast("CursorResult[Any]", await session.execute(delete(ChangeAck)))
+    changes = cast("CursorResult[Any]", await session.execute(delete(DataChange)))
+    runs = cast("CursorResult[Any]", await session.execute(delete(SyncRun)))
+    # One transaction: a partial reset would leave orphaned history that the
+    # next run appends to rather than replaces.
+    await session.commit()
+
+    deleted = ResetDemoDeleted(
+        change_ack=acks.rowcount or 0,
+        data_change=changes.rowcount or 0,
+        sync_run=runs.rowcount or 0,
+    )
+
+    if not restore_snapshot:
+        return ResetDemoResponse(deleted=deleted, snapshot_restored=False)
+
+    # A seed rather than a sync. A sync would restore the values but write a
+    # fresh sync_run and a data_change per repair -- exactly the noise this
+    # endpoint exists to remove.
+    report = await seed(build_source("fixture"))
+
+    # Reference data was rewritten, so anything derived from it is stale.
+    try:
+        await registry.rebuild(session)
+    except Exception:
+        registry.invalidate()
+        logger.exception("Derived cache rebuild failed after reset-demo")
+
+    return ResetDemoResponse(deleted=deleted, snapshot_restored=report.ok)
