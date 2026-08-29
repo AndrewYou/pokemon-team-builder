@@ -250,10 +250,15 @@ Or from Swagger, in four calls:
 3. `POST /admin/sync?source=fixture` — 202, poll the job
 4. `GET /admin/changes` — 10 rows whose messages match `expect_alert` verbatim
 
-`GET /sync-runs` is public and unauthenticated on purpose. A run recording 1025
-records scanned and **0 changes found** is the evidence that this detects
-changes rather than inventing them, and a reviewer should not need credentials
-to see it.
+`GET /admin/sync-runs` is the run log. A run recording 1025 records scanned and
+**0 changes found** is the evidence that this detects changes rather than
+inventing them, so both outcomes appear in its response examples.
+
+Every operational read sits behind the same admin gate. Sync runs are global
+system state -- there is no per-user scoping on `sync_run` -- so splitting the
+aggregate out as public while keeping the field-level detail in `/admin/changes`
+would have been an arbitrary line. The admin credentials are published in the
+API description, so the gate costs a reviewer one click and hides nothing.
 
 ### simulate-change mutates OUR snapshot
 

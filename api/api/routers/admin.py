@@ -28,6 +28,7 @@ from api.schemas import (
     SimulateChangeRequest,
     SimulateChangeResponse,
     StatsResponse,
+    SyncRunRead,
     TypeName,
     VectorResponse,
     error_response,
@@ -439,3 +440,24 @@ async def simulate_change(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+
+
+@router.get(
+    "/sync-runs",
+    response_model=list[SyncRunRead],
+    summary="Change-detection run history",
+    description=(
+        "Every sync, newest first, with what it scanned and what it found.\n\n"
+        "A run recording 1025 records scanned and **0 changes found** is the point "
+        "of this log: it shows the detector checked everything and reported "
+        "nothing, which is what separates it from a notification generator. Both "
+        "outcomes appear in the response examples.\n\n"
+        "`GET /admin/changes` has the field-level detail behind any run that found "
+        "something."
+    ),
+)
+async def list_sync_runs(
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[SyncRunRead]:
+    return await sync_service.list_sync_runs(session, limit)
