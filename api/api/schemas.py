@@ -422,3 +422,397 @@ class DeterminismCheckResponse(BaseModel):
             }
         }
     )
+
+
+# --- Shared -----------------------------------------------------------------
+
+
+class ErrorResponse(BaseModel):
+    """The single error shape for every router.
+
+    Matches FastAPI's own HTTPException body so handlers and framework errors
+    are indistinguishable to a client.
+    """
+
+    detail: str = Field(description="Human-readable explanation of the failure.")
+
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Team not found"}})
+
+
+class PokemonStats(BaseModel):
+    """The six base stats, exactly as PokeAPI reports them.
+
+    Base values, not level-50 values: the conversion belongs to the derived
+    layer so change detection keeps comparing like with like.
+    """
+
+    hp: int
+    attack: int
+    defense: int
+    special_attack: int
+    special_defense: int
+    speed: int
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "hp": 78,
+                "attack": 84,
+                "defense": 78,
+                "special_attack": 109,
+                "special_defense": 85,
+                "speed": 100,
+            }
+        }
+    )
+
+
+class PokemonSummary(BaseModel):
+    """A catalog entry. Never includes the raw payload column."""
+
+    id: int
+    name: str
+    sprite_url: str | None
+    types: list[str] = Field(description="One or two types, in slot order.")
+    stats: PokemonStats
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": 6,
+                "name": "charizard",
+                "sprite_url": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/6.png",
+                "types": ["fire", "flying"],
+                "stats": {
+                    "hp": 78,
+                    "attack": 84,
+                    "defense": 78,
+                    "special_attack": 109,
+                    "special_defense": 85,
+                    "speed": 100,
+                },
+            }
+        }
+    )
+
+
+class MoveSummary(BaseModel):
+    """One move a Pokemon can learn."""
+
+    id: int
+    name: str
+    type: str
+    damage_class: str = Field(description="physical, special, or status.")
+    power: int | None = Field(default=None, description="Null for status moves.")
+    accuracy: int | None = Field(default=None, description="Null for moves that never miss.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": 53,
+                "name": "flamethrower",
+                "type": "fire",
+                "damage_class": "special",
+                "power": 90,
+                "accuracy": 100,
+            }
+        }
+    )
+
+
+class PokemonDetail(PokemonSummary):
+    """A catalog entry plus its movepool."""
+
+    moves: list[MoveSummary]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": 6,
+                "name": "charizard",
+                "sprite_url": "https://img/6.png",
+                "types": ["fire", "flying"],
+                "stats": {
+                    "hp": 78,
+                    "attack": 84,
+                    "defense": 78,
+                    "special_attack": 109,
+                    "special_defense": 85,
+                    "speed": 100,
+                },
+                "moves": [
+                    {
+                        "id": 53,
+                        "name": "flamethrower",
+                        "type": "fire",
+                        "damage_class": "special",
+                        "power": 90,
+                        "accuracy": 100,
+                    }
+                ],
+            }
+        }
+    )
+
+
+class PokemonPage(BaseModel):
+    """One page of catalog results.
+
+    Cursor-based rather than offset: the frontend scrolls infinitely, and an
+    OFFSET grows more expensive the further down you go while also skipping or
+    repeating rows if the underlying data shifts mid-scroll.
+    """
+
+    items: list[PokemonSummary]
+    next_cursor: str | None = Field(
+        default=None, description="Pass back as `cursor`. Null on the last page."
+    )
+    has_more: bool
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "items": [],
+                "next_cursor": "eyJrIjoiNiIsImkiOjZ9",
+                "has_more": True,
+            }
+        }
+    )
+
+
+# --- Teams ------------------------------------------------------------------
+
+
+class TeamMemberRead(BaseModel):
+    """One roster slot, resolved to the Pokemon occupying it."""
+
+    slot: int = Field(description="1 through 6.")
+    pokemon_id: int
+    name: str
+    sprite_url: str | None
+    types: list[str]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "slot": 1,
+                "pokemon_id": 25,
+                "name": "pikachu",
+                "sprite_url": "https://img/25.png",
+                "types": ["electric"],
+            }
+        }
+    )
+
+
+class TeamRead(BaseModel):
+    """A team and its roster, ordered by slot."""
+
+    id: int
+    name: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    members: list[TeamMemberRead]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": 1,
+                "name": "Kanto classics",
+                "created_at": "2026-08-29T12:00:00Z",
+                "updated_at": "2026-08-29T12:30:00Z",
+                "members": [
+                    {
+                        "slot": 1,
+                        "pokemon_id": 25,
+                        "name": "pikachu",
+                        "sprite_url": "https://img/25.png",
+                        "types": ["electric"],
+                    }
+                ],
+            }
+        }
+    )
+
+
+class TeamCreate(BaseModel):
+    """Payload for creating a team."""
+
+    name: str = Field(min_length=1, max_length=100)
+
+    model_config = ConfigDict(json_schema_extra={"example": {"name": "Kanto classics"}})
+
+
+class TeamUpdate(BaseModel):
+    """Payload for renaming a team."""
+
+    name: str = Field(min_length=1, max_length=100)
+
+    model_config = ConfigDict(json_schema_extra={"example": {"name": "Kanto classics v2"}})
+
+
+class RosterUpdate(BaseModel):
+    """The complete ordered roster.
+
+    Drag-and-drop produces a whole new ordering, so the client sends the entire
+    array and the server replaces every row in one transaction. Incremental
+    add/remove/move endpoints would need three round trips to express one drag
+    and could interleave into an inconsistent order.
+    """
+
+    pokemon_ids: list[int] = Field(
+        description="Ordered Pokemon ids. Position determines slot. At most 6, no duplicates.",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"pokemon_ids": [25, 6, 9, 3, 143, 150]}}
+    )
+
+
+# --- Counter-team -----------------------------------------------------------
+
+
+class CounterTeamRequest(BaseModel):
+    """The enemy team to answer."""
+
+    pokemon_ids: list[int] = Field(description="The opposing team, up to 6 Pokemon.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            # Charizard, Venusaur, Blastoise, Gengar, Skarmory, Tyranitar.
+            # Pre-filled so "Try it out" gives a meaningful answer in one click.
+            "example": {"pokemon_ids": [6, 3, 9, 94, 227, 248]}
+        }
+    )
+
+
+class CounterAnswer(BaseModel):
+    """How well one pick answers one enemy.
+
+    Phase 9 adds move, turns-to-KO, and speed fields here without changing the
+    surrounding shape.
+    """
+
+    enemy_id: int
+    enemy_name: str
+    multiplier: float = Field(
+        description="The matchup score: offensive multiplier divided by the "
+        "worst multiplier the enemy lands back. Higher is better."
+    )
+    rationale: str = Field(description="How the score was arrived at.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "enemy_id": 6,
+                "enemy_name": "charizard",
+                "multiplier": 4.0,
+                "rationale": "rock hits fire/flying for 4x; takes 1x back",
+            }
+        }
+    )
+
+
+class CounterPick(BaseModel):
+    """One recommended Pokemon and what it answers."""
+
+    id: int
+    name: str
+    sprite_url: str | None
+    types: list[str]
+    answers: list[CounterAnswer]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": 248,
+                "name": "tyranitar",
+                "sprite_url": "https://img/248.png",
+                "types": ["rock", "dark"],
+                "answers": [
+                    {
+                        "enemy_id": 6,
+                        "enemy_name": "charizard",
+                        "multiplier": 4.0,
+                        "rationale": "rock hits fire/flying for 4x; takes 1x back",
+                    }
+                ],
+            }
+        }
+    )
+
+
+class CoverageEntry(BaseModel):
+    """The best answer the recommended team has for one enemy."""
+
+    enemy_id: int
+    enemy_name: str
+    best_answer: str = Field(description="Name of the pick that answers this enemy best.")
+    best_answer_id: int
+    score: float
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "enemy_id": 6,
+                "enemy_name": "charizard",
+                "best_answer": "tyranitar",
+                "best_answer_id": 248,
+                "score": 4.0,
+            }
+        }
+    )
+
+
+class CounterTeamResponse(BaseModel):
+    """Six picks and the coverage they provide.
+
+    Type effectiveness only in this version: no damage formula, no stats, no
+    moves, no speed. Phase 9 replaces the scoring function behind this shape.
+    """
+
+    picks: list[CounterPick]
+    coverage: list[CoverageEntry]
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "picks": [],
+                "coverage": [
+                    {
+                        "enemy_id": 6,
+                        "enemy_name": "charizard",
+                        "best_answer": "tyranitar",
+                        "best_answer_id": 248,
+                        "score": 4.0,
+                    }
+                ],
+            }
+        }
+    )
+
+
+class ExplainResponse(BaseModel):
+    """A query and the plan Postgres chose for it."""
+
+    query: str = Field(description="Which named query was explained.")
+    sql: str
+    plan: list[str] = Field(description="EXPLAIN (ANALYZE, BUFFERS) output, line by line.")
+    uses_index: bool = Field(
+        description="True when the plan mentions an index scan. A sequential scan "
+        "here means an index that was supposed to serve this query is not being used."
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "query": "name_search",
+                "sql": "SELECT id, name FROM pokemon WHERE name LIKE 'char%' ORDER BY id LIMIT 49",
+                "plan": [
+                    "Bitmap Heap Scan on pokemon (actual time=0.02..0.03 rows=6 loops=1)",
+                    "  ->  Bitmap Index Scan on ix_pokemon_name_prefix",
+                ],
+                "uses_index": True,
+            }
+        }
+    )

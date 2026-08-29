@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse
 from api.config import settings
 from api.db import SessionLocal
 from api.derived import registry
-from api.routers import admin, health
+from api.routers import admin, catalog, counterteam, health, teams
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +107,15 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Without this the browser hides the header from cross-origin JavaScript, so
+    # a client that let the API mint its identity could never read it back.
+    expose_headers=["X-User-Id"],
 )
 
 app.include_router(health.router)
+app.include_router(catalog.router)
+app.include_router(teams.router)
+app.include_router(counterteam.router)
 app.include_router(admin.router)
 
 

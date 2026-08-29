@@ -13,7 +13,7 @@ from decimal import Decimal
 import numpy as np
 import pytest
 
-from api.derived.cache import DerivedCache
+from api.derived.cache import DerivedCache, PokemonMeta
 from api.derived.typechart import (
     LEGAL_CHART_VALUES,
     LEGAL_DEFENSIVE_VALUES,
@@ -137,6 +137,10 @@ def _cache(chart: dict[str, dict[str, float]]) -> DerivedCache:
         chart=chart,
         pokemon_index={6: 0, 25: 1},
         pokemon_ids=[6, 25],
+        meta=[
+            PokemonMeta(6, "charizard", "https://img/6.png", ("fire", "flying")),
+            PokemonMeta(25, "pikachu", "https://img/25.png", ("electric",)),
+        ],
         vectors=vectors,
         built_at=datetime.datetime.now(datetime.UTC),
         build_ms=1.0,

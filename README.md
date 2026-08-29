@@ -174,6 +174,66 @@ a confident, neutral, incorrect 1.0. The cache tracks how many rows it actually
 loaded, and the debug endpoints answer 503 with the two calls that fix it rather
 than serving from a defaulted chart.
 
+## Identity: a header, and why that is enough
+
+There is no login. A client sends `X-User-Id`, an opaque UUID, and owns whatever
+it created under that UUID. Omit the header and the API mints one, returning it
+in the `X-User-Id` response header for the client to store.
+
+**Assumption, stated rather than hidden:** this is trivially spoofable. Anyone
+can send someone else's UUID and read their teams. That is acceptable here
+because nothing stored is private or valuable -- a list of Pokemon names -- and
+adding real authentication would be scope this take-home does not ask for.
+
+A header rather than a cookie because the frontend and API sit on different
+origins, and cross-origin cookies mean credentialed CORS, which means giving up
+the wildcard origin for no benefit. The header is declared explicitly on every
+user-scoped route so it appears in the OpenAPI schema; read off the raw request
+instead, Swagger's "Try it out" would not send it and every call would 422.
+
+Another user's team returns **404, not 403**. A 403 would confirm the id exists
+and belongs to somebody.
+
+## Application routers
+
+**Catalog** (`/pokemon`) is cursor-paginated, not offset: the frontend scrolls
+infinitely, and an OFFSET both slows down as it grows and can skip or repeat
+rows if the data shifts mid-scroll. The cursor is an opaque `(sort key, id)`
+pair, with the id included so the ordering is total.
+
+Search is a lowercased prefix `LIKE`, which the `text_pattern_ops` index serves.
+`ILIKE` would read more naturally and cannot use that index -- it plans a
+sequential scan. Stored names are all lowercase, so lowering the search term
+gives case-insensitivity and index usage at once. `GET /admin/debug/explain`
+shows the plan for each query so this stays checkable rather than assumed.
+
+**Teams** (`/teams`) replaces the whole roster in one request. There are no
+add, remove, or move endpoints: a drag-and-drop reorder produces an entirely
+new ordering, so sending the array is simpler and atomic. It also sidesteps the
+`UNIQUE(team_id, slot)` constraint, which a partial reorder would trip while
+swapping two slots.
+
+**Counter-team** (`/counter-team`) is type effectiveness only -- no damage
+formula, stats, moves, or speed. One scoring function is the only thing a later
+damage model replaces:
+
+```
+offense = best multiplier the pick's types land on the enemy
+defense = 1 / worst multiplier the enemy's types land back
+score   = offense * defense
+```
+
+Picks are chosen over six rounds by marginal gain: each round takes whichever
+candidate most improves the currently worst-covered enemies. Diminishing returns
+come from that structure, not a decay parameter -- once an enemy is answered,
+answering it again adds nothing. If coverage saturates before six picks, the
+roster is filled by total score rather than returned short.
+
+Immunity is capped rather than infinite: a pick that takes nothing from the
+enemy would be a division by zero, so it scores one step above the best
+resistance. It is stateless and never touches the database -- the display fields
+it needs live in the derived cache.
+
 ## Normalisation and change detection
 
 `api/sync/` holds the projection, the section hashes, and the diff. It is the

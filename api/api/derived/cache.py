@@ -28,6 +28,21 @@ from api.models import Pokemon
 from api.models import TypeChart as TypeChartRow
 
 
+@dataclass(frozen=True, slots=True)
+class PokemonMeta:
+    """The catalog fields needed to describe a Pokemon without touching the DB.
+
+    Counter-team selection is required to run entirely off in-memory derived
+    data, so the display fields have to live here rather than being joined back
+    in per request.
+    """
+
+    id: int
+    name: str
+    sprite_url: str | None
+    types: tuple[str, ...]
+
+
 @dataclass(slots=True)
 class DerivedCache:
     """Immutable snapshot of everything derived from reference data."""
@@ -37,6 +52,8 @@ class DerivedCache:
     pokemon_index: dict[int, int]
     # Row index -> pokemon_id, so a row can be traced back.
     pokemon_ids: list[int]
+    # Row index -> display metadata, aligned with `vectors`.
+    meta: list[PokemonMeta]
     # Shape (n_pokemon, 18). Column order is CANONICAL_TYPES.
     vectors: npt.NDArray[np.float64]
     built_at: datetime.datetime
@@ -50,6 +67,12 @@ class DerivedCache:
     @property
     def pokemon_count(self) -> int:
         return len(self.pokemon_ids)
+
+    def meta_for(self, pokemon_id: int) -> PokemonMeta:
+        row = self.pokemon_index.get(pokemon_id)
+        if row is None:
+            raise KeyError(pokemon_id)
+        return self.meta[row]
 
     @property
     def chart_complete(self) -> bool:
@@ -106,11 +129,24 @@ async def build_cache(session: AsyncSession) -> DerivedCache:
     chart = build_chart(chart_tuples)
 
     pokemon_rows = (
-        await session.execute(select(Pokemon.id, Pokemon.type1, Pokemon.type2).order_by(Pokemon.id))
+        await session.execute(
+            select(
+                Pokemon.id, Pokemon.name, Pokemon.sprite_url, Pokemon.type1, Pokemon.type2
+            ).order_by(Pokemon.id)
+        )
     ).all()
 
     pokemon_ids = [row.id for row in pokemon_rows]
     pokemon_index = {pokemon_id: index for index, pokemon_id in enumerate(pokemon_ids)}
+    meta = [
+        PokemonMeta(
+            id=row.id,
+            name=row.name,
+            sprite_url=row.sprite_url,
+            types=tuple(t for t in (row.type1, row.type2) if t),
+        )
+        for row in pokemon_rows
+    ]
 
     # Allocated up front rather than appended: the shape is known, and this
     # keeps the array contiguous for the counter-team scoring that comes later.
@@ -122,6 +158,7 @@ async def build_cache(session: AsyncSession) -> DerivedCache:
         chart=chart,
         pokemon_index=pokemon_index,
         pokemon_ids=pokemon_ids,
+        meta=meta,
         vectors=vectors,
         built_at=datetime.datetime.now(datetime.UTC),
         build_ms=(time.perf_counter() - started) * 1000,

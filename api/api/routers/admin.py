@@ -18,6 +18,7 @@ from api.schemas import (
     CacheRebuildResponse,
     DeriveTypesResponse,
     DeterminismCheckResponse,
+    ExplainResponse,
     JobAccepted,
     JobRead,
     MatchupResponse,
@@ -28,6 +29,7 @@ from api.schemas import (
 )
 from api.security import verify_admin
 from api.services import derive as derive_service
+from api.services import explain as explain_service
 from api.services import jobs as job_service
 from api.services import normalization as normalization_service
 
@@ -122,7 +124,7 @@ async def get_stats(session: SessionDep) -> StatsResponse:
     return await job_service.collect_stats(session)
 
 
-def _require_cache() -> registry.DerivedCache:
+def require_cache() -> registry.DerivedCache:
     """Fetch the derived cache or explain how to build it.
 
     503 rather than 500: an unbuilt cache is a missing precondition on a fresh
@@ -208,7 +210,7 @@ async def debug_matchup(
     attacking_type: Annotated[TypeName, Query(description="The attacking type.")],
     pokemon_id: Annotated[int, Query(ge=1, description="Defending Pokemon.")],
 ) -> MatchupResponse:
-    cache = _require_cache()
+    cache = require_cache()
     found = await derive_service.pokemon_types(session, pokemon_id)
     if found is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pokemon not found")
@@ -237,7 +239,7 @@ async def debug_matchup(
     responses={404: {"description": "No Pokemon with that id."}},
 )
 async def debug_vector(pokemon_id: int, session: SessionDep) -> VectorResponse:
-    cache = _require_cache()
+    cache = require_cache()
     found = await derive_service.pokemon_types(session, pokemon_id)
     if found is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pokemon not found")
@@ -296,3 +298,31 @@ async def debug_normalize(pokemon_id: int, session: SessionDep) -> NormalizeDebu
 )
 async def debug_determinism_check(session: SessionDep) -> DeterminismCheckResponse:
     return await normalization_service.determinism_check(session)
+
+
+@router.get(
+    "/debug/explain",
+    response_model=ExplainResponse,
+    summary="Show the query plan for a catalog query",
+    description=(
+        "Runs EXPLAIN (ANALYZE, BUFFERS) on the query the application actually "
+        "issues, so index usage is checkable from the browser rather than "
+        "asserted in a comment.\n\n"
+        "`name_search` is the one to watch: the prefix search is served by a "
+        "`text_pattern_ops` index, and a sequential scan here means something "
+        "changed the query into a shape the index cannot serve."
+    ),
+)
+async def debug_explain(
+    session: SessionDep,
+    query: Annotated[
+        explain_service.ExplainQuery, Query(description="Which query to explain.")
+    ] = explain_service.ExplainQuery.name_search,
+) -> ExplainResponse:
+    sql, plan = await explain_service.explain(session, query)
+    return ExplainResponse(
+        query=query.value,
+        sql=sql,
+        plan=plan,
+        uses_index=any("Index Scan" in line or "Index Only Scan" in line for line in plan),
+    )
