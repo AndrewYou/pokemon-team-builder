@@ -72,3 +72,50 @@ def tackle() -> dict[str, Any]:
         "learned_by_pokemon": [{"name": "p"}] * 200,
         "machines": [],
     }
+
+
+def _payload(**overrides: Any) -> dict[str, Any]:
+    """A Charizard-shaped payload carrying plenty of fields we never read."""
+    base: dict[str, Any] = {
+        "id": 6,
+        "name": "charizard",
+        "height": 17,
+        "weight": 905,
+        "is_default": True,
+        "sprites": {"front_default": "https://img/6.png"},
+        "types": [
+            {"slot": 1, "type": {"name": "fire"}},
+            {"slot": 2, "type": {"name": "flying"}},
+        ],
+        "stats": [
+            {"stat": {"name": "hp"}, "base_stat": 78},
+            {"stat": {"name": "attack"}, "base_stat": 84},
+            {"stat": {"name": "defense"}, "base_stat": 78},
+            {"stat": {"name": "special-attack"}, "base_stat": 109},
+            {"stat": {"name": "special-defense"}, "base_stat": 85},
+            {"stat": {"name": "speed"}, "base_stat": 100},
+        ],
+        "abilities": [
+            {"ability": {"name": "blaze"}, "is_hidden": False},
+            {"ability": {"name": "solar-power"}, "is_hidden": True},
+        ],
+        "moves": [
+            {"move": {"name": "flamethrower", "url": "https://pokeapi.co/api/v2/move/53/"}},
+            {"move": {"name": "fly", "url": "https://pokeapi.co/api/v2/move/19/"}},
+            {"move": {"name": "scratch", "url": "https://pokeapi.co/api/v2/move/10/"}},
+        ],
+        # None of the below is consumed. All of it churns upstream.
+        "base_experience": 267,
+        "order": 7,
+        "species": {"name": "charizard", "url": "https://pokeapi.co/api/v2/pokemon-species/6/"},
+        "game_indices": [{"game_index": 180, "version": {"name": "red"}}],
+        "held_items": [],
+        "location_area_encounters": "https://pokeapi.co/api/v2/pokemon/6/encounters",
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.fixture
+def payload() -> dict[str, Any]:
+    return _payload()

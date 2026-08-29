@@ -203,6 +203,12 @@ GET  /admin/debug/normalize/{id}      raw and projection side by side
 POST /admin/debug/determinism-check   re-hash every Pokemon against the database
 ```
 
+The suite for this layer:
+
+```bash
+cd api && uv run pytest tests/test_normalize.py tests/test_hashing.py -v
+```
+
 The determinism check is what protects the whole change-detection demo: if
 normalisation is not a pure function of the stored payload, the next sync
 reports every Pokemon as changed. It compares 4,100 stored hashes in about
