@@ -1,7 +1,31 @@
-# The real Makefile lives at the repository root. This forwards every target so
-# that `make seed` works from inside api/ too, which is where people naturally
-# try it first.
-.DEFAULT_GOAL := help
+# API tasks. Run from this directory: `make seed`.
+#
+# make runs recipes under /bin/sh, which does not read your shell profile, so
+# uv's default install location has to be put back on PATH explicitly.
+export PATH := $(HOME)/.local/bin:$(PATH)
 
-%:
-	@$(MAKE) -C .. $@
+.DEFAULT_GOAL := help
+.PHONY: help seed seed-live fixture migrate check
+
+help:
+	@echo "seed       Seed Postgres from the committed fixture (default, offline)"
+	@echo "seed-live  Seed Postgres from pokeapi.co (thousands of requests)"
+	@echo "fixture    Regenerate fixtures/pokeapi-snapshot.json from pokeapi.co"
+	@echo "migrate    Apply Alembic migrations"
+	@echo "check      Lint, typecheck, and test"
+
+# Fixture is the default so that a stray `make seed` can never hammer PokeAPI.
+seed:
+	POKEAPI_SOURCE=fixture uv run python -m api.ingest.seed
+
+seed-live:
+	POKEAPI_SOURCE=live uv run python -m api.ingest.seed
+
+fixture:
+	uv run python -m api.ingest.fixture
+
+migrate:
+	uv run alembic upgrade head
+
+check:
+	uv run ruff check . && uv run ruff format --check . && uv run mypy api tests && uv run pytest -q

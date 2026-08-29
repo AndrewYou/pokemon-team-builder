@@ -48,17 +48,21 @@ check stays green while the frontend can still show *why* it is unreachable.
 ### Checks
 
 ```bash
-cd api && uv run ruff check . && uv run mypy api tests && uv run pytest
+cd api && make check
 cd web && npm run build
 ```
 
 ## Seeding
 
+All `make` targets live in `api/` and run from there:
+
 ```bash
+cd api
 make migrate     # apply Alembic migrations first
 make seed        # from the committed fixture, offline (default)
 make seed-live   # from pokeapi.co: ~2,300 rate-limited requests, minutes
 make fixture     # regenerate fixtures/pokeapi-snapshot.json from pokeapi.co
+make check       # lint, typecheck, test
 ```
 
 `make seed` is the fixture path on purpose, so a stray invocation can never
@@ -67,6 +71,8 @@ natural primary key, so re-running converges instead of duplicating.
 
 Both targets write to whatever `DATABASE_URL` names, including production if
 that is what `api/.env` holds. Prefix with an explicit URL when in doubt:
+
+The seed prints the host and database it is about to write to before it writes.
 
 ```bash
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/pokemon make seed
