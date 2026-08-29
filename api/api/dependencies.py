@@ -37,8 +37,10 @@ UserIdHeader = Annotated[
     Header(
         alias="X-User-Id",
         description=(
-            "Opaque client identifier. Omit it and the API mints one, returning it "
-            "in the X-User-Id response header for the client to store and reuse."
+            "Opaque client identifier. Omit it and the API mints a NEW one per "
+            "request, returning it in the X-User-Id response header. A freshly "
+            "minted identity owns nothing, so read endpoints will look empty. "
+            "Send the same UUID you created your data with."
         ),
         # `examples`, not the deprecated `example`: this is what puts a working
         # value in Swagger's Try-it-out box instead of an empty field.

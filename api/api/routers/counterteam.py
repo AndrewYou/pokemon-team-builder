@@ -20,14 +20,14 @@ MAX_ENEMIES = 6
     summary="Suggest a team that counters this one",
     description=(
         "Takes up to six Pokemon ids and returns six picks, each with a per-enemy "
-        "breakdown, plus a coverage summary.\\n\\n"
+        "breakdown, plus a coverage summary.\n\n"
         "**Type effectiveness only.** No damage formula, no stats, no moves, no "
         "speed. `offense` is the best multiplier a pick's own types land on the "
         "enemy, `defense` is the inverse of the worst multiplier it takes back, "
-        "and the score is their product.\\n\\n"
+        "and the score is their product.\n\n"
         "Picks are chosen by marginal gain over six rounds: each round takes the "
         "candidate that most improves the current worst-covered enemies, so "
-        "diminishing returns come from the structure rather than a decay factor.\\n\\n"
+        "diminishing returns come from the structure rather than a decay factor.\n\n"
         "Stateless -- nothing is stored, and the whole computation runs off the "
         "in-memory derived cache."
     ),

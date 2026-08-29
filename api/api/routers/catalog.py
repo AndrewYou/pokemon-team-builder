@@ -31,10 +31,10 @@ class SortOption(enum.StrEnum):
     summary="Browse the catalog",
     description=(
         "Cursor-paginated listing. Pass `next_cursor` back as `cursor` for the "
-        "next page.\\n\\n"
+        "next page.\n\n"
         "Cursor rather than offset because the frontend scrolls infinitely: an "
         "OFFSET gets slower the deeper you scroll and can skip or repeat rows if "
-        "the data shifts mid-scroll.\\n\\n"
+        "the data shifts mid-scroll.\n\n"
         "`type` matches either type slot. `search` is a case-insensitive prefix "
         "match served by an index."
     ),

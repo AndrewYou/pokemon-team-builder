@@ -17,13 +17,23 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
     summary="Changes affecting your teams",
     description=(
         f"Changes detected in the last {alert_service.WINDOW_DAYS} days to Pokemon on "
-        "your teams, excluding ones you have dismissed.\\n\\n"
+        "your teams, excluding ones you have dismissed.\n\n"
+        "### An empty feed usually means one of two things\n\n"
+        "**No sync has run yet.** `POST /admin/simulate-change` diverges our stored "
+        "snapshot; it does not write change records. Those come from "
+        "`POST /admin/sync`, which compares that snapshot against upstream. Check "
+        "`GET /admin/changes`: if it is empty, the sync is the missing step.\n\n"
+        "**The `X-User-Id` header was omitted.** It is optional, and leaving it out "
+        "mints a brand-new identity per request -- one that owns no teams and so "
+        "sees no alerts. Send the same UUID you created your teams with.\n\n"
+        "Full sequence: create a team, `POST /admin/simulate-change`, "
+        "`POST /admin/sync`, then this endpoint with the same `X-User-Id`.\n\n"
         "Grouped by Pokemon, with the teams each one appears in, and described as "
         "sentences rather than raw diffs. A Pokemon on three of your teams produces "
-        "one group listing all three, not three copies.\\n\\n"
+        "one group listing all three, not three copies.\n\n"
         "Dismissals are per user: dismissing an alert silences it for you and nobody "
         "else. Older changes are not deleted, they simply stop being news -- see "
-        "`GET /admin/changes` for the full history.\\n\\n"
+        "`GET /admin/changes` for the full history.\n\n"
         "To see the window work without waiting a week, backdate a change with "
         "`POST /admin/age-change/{change_id}?days=8` and watch it leave this feed."
     ),
@@ -37,7 +47,7 @@ async def list_alerts(session: SessionDep, user: CurrentUser) -> AlertsResponse:
     response_model=DismissResponse,
     summary="Dismiss one alert",
     description=(
-        "Acknowledges a change so it stops appearing in your feed.\\n\\n"
+        "Acknowledges a change so it stops appearing in your feed.\n\n"
         "Idempotent: dismissing something already dismissed answers 200 with the "
         "original timestamp and `already_dismissed: true`, rather than failing on "
         "the composite key. A client retrying a request it already made has not "

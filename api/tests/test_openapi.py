@@ -110,3 +110,30 @@ class TestAdminGate:
 
     def test_admin_route_rejects_wrong_credentials(self, client: TestClient) -> None:
         assert client.get("/admin/stats", auth=("admin", "nope")).status_code == 401
+
+
+class TestDescriptionsRender:
+    """Descriptions are Markdown in Swagger, and this is the demo surface.
+
+    Written through a shell heredoc, a paragraph break can end up as a literal
+    backslash-n in the Python source, which renders as visible escape characters
+    in one unbroken wall of text rather than as paragraphs.
+    """
+
+    def test_no_description_contains_a_literal_escape(self, schema: dict[str, Any]) -> None:
+        offenders = [
+            f"{method.upper()} {path}"
+            for path, method, op in _operations(schema)
+            if "\\n" in (op.get("description") or "")
+        ]
+        assert not offenders, f"literal backslash-n in: {offenders}"
+
+    def test_long_descriptions_have_real_paragraph_breaks(self, schema: dict[str, Any]) -> None:
+        """A multi-paragraph description that lost its breaks reads as a wall."""
+        for path, method, op in _operations(schema):
+            description = op.get("description") or ""
+            if len(description) > 400:
+                assert "\n" in description, f"{method.upper()} {path} has no line breaks"
+
+    def test_the_app_description_renders(self, schema: dict[str, Any]) -> None:
+        assert "\\n" not in schema["info"]["description"]

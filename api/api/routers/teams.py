@@ -101,10 +101,10 @@ async def delete_team(team_id: int, session: SessionDep, user: CurrentUser) -> N
     summary="Replace the roster",
     description=(
         "Takes the complete ordered list of Pokemon ids and replaces every slot "
-        "in one transaction. Position in the array becomes the slot number.\\n\\n"
+        "in one transaction. Position in the array becomes the slot number.\n\n"
         "There are deliberately no add, remove, or move endpoints: a drag-and-drop "
         "reorder produces a whole new ordering, so sending the entire array is both "
-        "simpler and atomic.\\n\\n"
+        "simpler and atomic.\n\n"
         "Rejects rosters over 6, duplicate Pokemon, and unknown ids with 422."
     ),
     responses={

@@ -52,15 +52,15 @@ class SyncSourceOption(enum.StrEnum):
     summary="Run change detection",
     description=(
         "Compares upstream against our stored snapshot, records every field-level "
-        "difference, and updates the snapshot.\\n\\n"
+        "difference, and updates the snapshot.\n\n"
         "Accepts **either** HTTP Basic (a human in this page) **or** an "
         "`X-Cron-Secret` header (a scheduled job). A scheduled caller cannot answer "
-        "a browser password prompt, and a reviewer should not need a shared secret.\\n\\n"
+        "a browser password prompt, and a reviewer should not need a shared secret.\n\n"
         "Returns 202 immediately and runs in the background: a live sync issues "
         "thousands of requests and would otherwise hang this page. Poll `poll_url` "
-        "for progress, and see `GET /sync-runs` for the history.\\n\\n"
+        "for progress, and see `GET /sync-runs` for the history.\n\n"
         "`stale` replays our own stored data as if it were upstream, which must "
-        "find exactly zero changes.\\n\\n"
+        "find exactly zero changes.\n\n"
         "Returns 409 if a sync is already running."
     ),
     responses={
