@@ -19,15 +19,19 @@ CACHE_CONTROL = "public, max-age=3600, stale-while-revalidate=86400"
 
 
 class SortOption(enum.StrEnum):
-    """Catalog ordering. A dropdown rather than free text, and validated as an
-    enum so nothing from the query string can reach SQL."""
+    """Catalog ordering. Validated as an enum so nothing from the query string
+    can reach SQL."""
 
     id = "id"
     name = "name"
-    total = "total"
-    hp = "hp"
-    attack = "attack"
-    speed = "speed"
+    stat_total = "stat_total"
+    base_hp = "base_hp"
+    base_atk = "base_atk"
+    base_def = "base_def"
+    base_spatk = "base_spatk"
+    base_spdef = "base_spdef"
+    base_speed = "base_speed"
+    type1 = "type1"
 
 
 class SortOrder(enum.StrEnum):
@@ -53,7 +57,8 @@ class SortOrder(enum.StrEnum):
         "the data shifts mid-scroll.\n\n"
         "`type` matches either type slot. `search` is a case-insensitive prefix "
         "match served by an index.\n\n"
-        "`sort` accepts id, name, total, hp, attack, or speed, with `order` "
+        "`sort` accepts id, name, stat_total, the six base stats, or type1, with "
+        "`order` controlling direction. "
         "controlling direction. Id is always the final ordering term so that "
         "rows sharing a value -- hundreds of Pokemon share a base stat total -- "
         "cannot reorder between pages and produce duplicates or gaps."

@@ -6,27 +6,41 @@ import { cn } from '@/lib/utils'
 /**
  * Sort field and direction, as two controls.
  *
- * The direction is separate rather than folded into the field list. Doubling
- * every option ("Name A-Z", "Name Z-A", ...) makes the menu twice as long and
- * doubles again with each field added.
+ * The direction is separate rather than folded into the field list. Ten fields
+ * would become twenty options, and twenty again with the next field added.
  */
 
-export const SORT_FIELDS: {
+interface SortFieldDef {
   value: SortField
   label: string
+  group: string
   /** Ascending means something different per field, so each says so. */
   ascending: string
   descending: string
   /** Nobody sorts by Attack to find the weakest Pokemon. */
   defaultOrder: SortOrder
-}[] = [
-  { value: 'id', label: 'Pokédex order', ascending: 'Lowest first', descending: 'Highest first', defaultOrder: 'asc' },
-  { value: 'name', label: 'Name', ascending: 'A to Z', descending: 'Z to A', defaultOrder: 'asc' },
-  { value: 'total', label: 'Total base stats', ascending: 'Weakest first', descending: 'Strongest first', defaultOrder: 'desc' },
-  { value: 'hp', label: 'HP', ascending: 'Weakest first', descending: 'Strongest first', defaultOrder: 'desc' },
-  { value: 'attack', label: 'Attack', ascending: 'Weakest first', descending: 'Strongest first', defaultOrder: 'desc' },
-  { value: 'speed', label: 'Speed', ascending: 'Slowest first', descending: 'Fastest first', defaultOrder: 'desc' },
+}
+
+const ALPHA = { ascending: 'A to Z', descending: 'Z to A' } as const
+const MAGNITUDE = { ascending: 'Weakest first', descending: 'Strongest first' } as const
+
+export const SORT_FIELDS: SortFieldDef[] = [
+  { value: 'id', label: 'Pokédex order', group: 'General', ascending: 'Lowest first', descending: 'Highest first', defaultOrder: 'asc' },
+  { value: 'name', label: 'Name', group: 'General', ...ALPHA, defaultOrder: 'asc' },
+
+  { value: 'stat_total', label: 'Total base stats', group: 'Base stats', ...MAGNITUDE, defaultOrder: 'desc' },
+  { value: 'base_hp', label: 'HP', group: 'Base stats', ...MAGNITUDE, defaultOrder: 'desc' },
+  { value: 'base_atk', label: 'Attack', group: 'Base stats', ...MAGNITUDE, defaultOrder: 'desc' },
+  { value: 'base_def', label: 'Defense', group: 'Base stats', ...MAGNITUDE, defaultOrder: 'desc' },
+  { value: 'base_spatk', label: 'Sp. Attack', group: 'Base stats', ...MAGNITUDE, defaultOrder: 'desc' },
+  { value: 'base_spdef', label: 'Sp. Defense', group: 'Base stats', ...MAGNITUDE, defaultOrder: 'desc' },
+  { value: 'base_speed', label: 'Speed', group: 'Base stats', ...MAGNITUDE, defaultOrder: 'desc' },
+
+  { value: 'type1', label: 'Type', group: 'Other', ...ALPHA, defaultOrder: 'asc' },
 ]
+
+// Insertion order is the display order, so General comes before Base stats.
+const GROUPS = [...new Set(SORT_FIELDS.map((field) => field.group))]
 
 const CONTROL = 'border-border bg-card h-8 rounded-[8px] border text-xs'
 
@@ -46,23 +60,32 @@ export function SortControl({
     <div className="flex items-center gap-1">
       <div className={cn(CONTROL, 'relative flex items-center gap-1 pl-2')}>
         <ArrowUpDown aria-hidden className="text-muted-foreground size-3 shrink-0" />
-        {/* "Sort:" spelled out. A bare dropdown reading "Name" beside a search
-            box looks like a filter, not an ordering. */}
+        {/* Spelled out. A bare dropdown reading "Name" beside a search box
+            looks like a filter, not an ordering. */}
         <span className="text-muted-foreground shrink-0">Sort:</span>
         <select
           value={sort}
           onChange={(event) => {
             const next = event.target.value as SortField
             const nextField = SORT_FIELDS.find((candidate) => candidate.value === next)
+            // Switching field picks the direction people actually want rather
+            // than carrying the previous one over.
             onChange(next, nextField?.defaultOrder ?? 'asc')
           }}
           aria-label="Sort field"
           className="h-full cursor-pointer bg-transparent pr-2 focus-visible:outline-none"
         >
-          {SORT_FIELDS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
+          {/* Grouped with labels: ten flat options is a wall. optgroup gives
+              the same grouping natively, keeps this consistent with the other
+              controls here, and uses the platform picker on mobile. */}
+          {GROUPS.map((group) => (
+            <optgroup key={group} label={group}>
+              {SORT_FIELDS.filter((option) => option.group === group).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </div>

@@ -137,10 +137,18 @@ filter, and the direction toggle's label is field-aware -- "A to Z" for names,
 
 Both live in the URL, so a sorted view survives a reload and can be shared.
 
-Every sort ends with id in the same direction as the key. Hundreds of Pokemon
-share a base stat total, and without a tiebreaker those rows order arbitrarily
-between pages, which produces duplicates and gaps. The direction has to match
-because the cursor comparison is a row-value comparison over that same tuple.
+Ten fields, grouped into General, Base stats and Other. `stat_total` is a SQL
+expression rather than a stored column -- a stored one would need maintaining on
+every sync for no gain. `type1` folds the name into the sort key, or the hundred
+or so Water types come back in whatever order the planner produced.
+
+Every sort ends with **id ascending**, whichever way the key runs. Base stats tie
+constantly -- dozens of Pokemon share a Speed of 50 -- and paginating a cursor
+over a non-unique column silently drops and repeats rows across page boundaries,
+which looks like an infinite-scroll bug and is a sort bug. Because the
+tiebreaker does not follow the key's direction, resuming is an explicit two-part
+predicate rather than a row-value comparison: advance past the key, or stay on
+it and advance past the id.
 
 ### Drag and drop
 

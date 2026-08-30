@@ -11,7 +11,7 @@ import binascii
 import json
 from typing import Any
 
-from sqlalchemy import Select, literal, or_, select, tuple_
+from sqlalchemy import Select, and_, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models import Move, Pokemon, PokemonMove
@@ -29,10 +29,21 @@ MAX_LIMIT = 100
 # An allowlist, not a lookup into user input. The request carries a key from
 # this mapping and never a column name, so nothing from the query string
 # reaches SQL.
+#
+# stat_total is a SQL expression rather than a stored column: a stored one would
+# have to be maintained on every sync for no gain, since deriving it costs
+# nothing. A generated column is the escalation if it ever measures slow.
+#
+# type1 is a composite of type and name. Sorting on the type alone would return
+# the 100-odd Water types in whatever order the planner produced, so the name is
+# folded into the key. It is one expression rather than a second ORDER BY term
+# because the cursor carries the sort key, and a two-part key would need a
+# three-level keyset predicate to resume from. The separator is a space, which
+# sorts below every character either value can contain.
 SORTABLE: dict[str, Any] = {
     "id": Pokemon.id,
     "name": Pokemon.name,
-    "total": (
+    "stat_total": (
         Pokemon.base_hp
         + Pokemon.base_atk
         + Pokemon.base_def
@@ -40,9 +51,13 @@ SORTABLE: dict[str, Any] = {
         + Pokemon.base_spdef
         + Pokemon.base_speed
     ),
-    "hp": Pokemon.base_hp,
-    "attack": Pokemon.base_atk,
-    "speed": Pokemon.base_speed,
+    "base_hp": Pokemon.base_hp,
+    "base_atk": Pokemon.base_atk,
+    "base_def": Pokemon.base_def,
+    "base_spatk": Pokemon.base_spatk,
+    "base_spdef": Pokemon.base_spdef,
+    "base_speed": Pokemon.base_speed,
+    "type1": func.concat(Pokemon.type1, " ", Pokemon.name),
 }
 
 _LIST_COLUMNS = (
@@ -144,15 +159,25 @@ async def list_pokemon(
 
     if cursor:
         last_key, last_id = decode_cursor(cursor)
-        # tuple_() rather than a bare Python tuple: this has to compile to a
-        # SQL row-value comparison, which is what advances the key and the
-        # tiebreaker together as one unit.
-        pair = tuple_(sort_expression, Pokemon.id)
-        anchor = tuple_(literal(last_key), literal(last_id))
-        statement = statement.where(pair < anchor if descending else pair > anchor)
+        # id ascends as the tiebreaker whichever way the key runs, so tied rows
+        # come back in Pokedex order rather than reversed. That rules out a
+        # plain row-value comparison, hence the explicit two-part predicate:
+        # advance past the key, or stay on it and advance past the id.
+        statement = statement.where(
+            or_(
+                sort_expression < literal(last_key)
+                if descending
+                else sort_expression > literal(last_key),
+                and_(sort_expression == literal(last_key), Pokemon.id > literal(last_id)),
+            )
+        )
 
+    # Every sort ends with id ascending. Base stats tie constantly -- dozens of
+    # Pokemon share a Speed of 50 -- and paginating a cursor over a non-unique
+    # column silently drops and repeats rows across page boundaries, which looks
+    # like an infinite-scroll bug and is a sort bug.
     ordering = (
-        (sort_expression.desc(), Pokemon.id.desc())
+        (sort_expression.desc(), Pokemon.id.asc())
         if descending
         else (sort_expression.asc(), Pokemon.id.asc())
     )

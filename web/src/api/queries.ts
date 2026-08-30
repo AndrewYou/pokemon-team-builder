@@ -59,7 +59,17 @@ export const keys = {
   counterTeam: ['counter-team'] as const,
 }
 
-export type SortField = 'id' | 'name' | 'total' | 'hp' | 'attack' | 'speed'
+export type SortField =
+  | 'id'
+  | 'name'
+  | 'stat_total'
+  | 'base_hp'
+  | 'base_atk'
+  | 'base_def'
+  | 'base_spatk'
+  | 'base_spdef'
+  | 'base_speed'
+  | 'type1'
 export type SortOrder = 'asc' | 'desc'
 
 export interface CatalogFilters {

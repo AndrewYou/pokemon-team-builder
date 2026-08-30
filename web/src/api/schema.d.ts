@@ -39,7 +39,7 @@ export interface paths {
          *
          *     `type` matches either type slot. `search` is a case-insensitive prefix match served by an index.
          *
-         *     `sort` accepts id, name, total, hp, attack, or speed, with `order` controlling direction. Id is always the final ordering term so that rows sharing a value -- hundreds of Pokemon share a base stat total -- cannot reorder between pages and produce duplicates or gaps.
+         *     `sort` accepts id, name, stat_total, the six base stats, or type1, with `order` controlling direction. controlling direction. Id is always the final ordering term so that rows sharing a value -- hundreds of Pokemon share a base stat total -- cannot reorder between pages and produce duplicates or gaps.
          */
         get: operations["list_pokemon_pokemon_get"];
         put?: never;
@@ -2029,11 +2029,11 @@ export interface components {
         };
         /**
          * SortOption
-         * @description Catalog ordering. A dropdown rather than free text, and validated as an
-         *     enum so nothing from the query string can reach SQL.
+         * @description Catalog ordering. Validated as an enum so nothing from the query string
+         *     can reach SQL.
          * @enum {string}
          */
-        SortOption: "id" | "name" | "total" | "hp" | "attack" | "speed";
+        SortOption: "id" | "name" | "stat_total" | "base_hp" | "base_atk" | "base_def" | "base_spatk" | "base_spdef" | "base_speed" | "type1";
         /**
          * SortOrder
          * @description Sort direction, kept separate from the field.
