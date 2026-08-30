@@ -77,18 +77,19 @@ Multi-turn moves (Solar Beam's charge) and self-debuffs (Draco Meteor halving
 Sp. Atk) are not modelled. No tier restrictions, so legendaries dominate the
 picks — accepted as scope, not filtered.
 
-The line isn't arbitrary: **everything excluded requires battle state;
-everything included is a static property of the matchup.** That distinction is
-the architectural boundary, and it's why the exclusions are scope rather than
-gaps.
+The exclusions aren't a list of things left undone. **Everything included is
+fixed before the battle starts**, so a matchup is a pure function of two Pokémon
+and can be computed once at startup. **Everything excluded only has a value
+mid-battle**, and modelling any of it means building a turn-by-turn simulator
+with mutable state — one feature, not six.
 
 ## 4. The counter-team algorithm
 
 Given an opposing team of N Pokémon, return N counters.
 
 1. **Score every candidate against every enemy, both directions.** Damage is
-   computed at level 50 for all 1,025 candidates and expressed as a fraction of
-   the defender's HP: 1.38 is a one-turn KO with margin, 0.51 is two turns. Both
+   computed at level 50 for all 1,025 candidates as a share of the defender's
+   health bar: 1.38 means one hit is enough, 0.51 means it takes two. Both
    directions are required — dealing 0.6 per turn while taking 1.2 is not a
    counter, it's a casualty.
 
