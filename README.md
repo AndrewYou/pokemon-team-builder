@@ -510,11 +510,38 @@ strip reads "every threat answered" for most teams. The gap path is built and
 correct; it becomes load-bearing the moment a tier filter narrows the candidate
 pool.
 
+Coverage speaks in the passive voice -- "Steelix — Dominated" -- because the
+subject of a chip is the THREAT. The active verb inverts the meaning there:
+"Steelix Dominates" reads as Steelix winning. Inside a pick's detail table the
+subject is our counter, so the active form is correct and stays. Both vocabularies
+live in one module keyed by the single verdict the API sends, so they cannot
+drift apart or disagree about which colour goes with which word.
+
+The summary line above the strip is adaptive rather than reassuring: it names
+contested threats in amber and unanswered ones in rose, and only says "every
+threat answered" when that is true. A green summary sitting above a red chip is
+worse than no summary.
+
 Picks are collapsed by default to one row each -- sprite, name, typing, and one
 verdict-coloured dot per enemy. Six green dots reads "handles everything" and
 five green with one red reads "one gap", neither of which needs expanding. The
 detail table is one click away, several can be open at once, and expansion state
 resets when a new counter team is generated.
+
+### The tooltip is portalled
+
+Turn margin is our metric, not a standard Pokemon concept, so the info icons
+explaining it are load-bearing. They are one component handling hover, keyboard
+focus and tap rather than a hover tooltip plus a separate mobile popover --
+branching on a media query gets touch laptops wrong.
+
+It renders into `document.body` with `fixed` positioning taken from the
+trigger's rect. Positioning it absolutely inside the row is what broke it: the
+collapsible pick body wraps its content in `overflow-hidden` to animate height,
+so a tooltip drawn above its trigger fell outside that box and was clipped away
+-- present in the DOM, reported visible by both the browser and the test, and
+invisible on screen. The test now checks that the tooltip's centre point
+actually hit-tests back to the tooltip.
 
 ### Declared simplifications
 

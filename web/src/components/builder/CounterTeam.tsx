@@ -14,9 +14,9 @@ import {
   TypeBadges,
   VerdictBadge,
   VerdictDots,
-  verdictTone,
 } from './primitives'
 import { InfoTip } from './InfoTip'
+import { verdictTone } from './verdicts'
 
 const MARGIN_HELP =
   'How many attacks the enemy runs short by. +3 means they need three more ' +
@@ -104,12 +104,44 @@ function AnswerTable({ answers }: { answers: CounterAnswer[] }) {
   )
 }
 
+const COVERAGE_HELP = (
+  <>
+    How well your counter team handles each threat. <strong>Dominated</strong> — knocked out with
+    turns to spare. <strong>Countered</strong> — wins the 1v1. <strong>Contested</strong> — an even
+    trade. <strong>Unanswered</strong> — no pick reliably beats it.
+  </>
+)
+
+/**
+ * The one-line read on the whole strip.
+ *
+ * Never a green "every threat answered" while something is unanswered: that is
+ * the single most useful thing this panel can say, so it is what the summary
+ * says, and it is the loudest thing in it.
+ */
+function coverageSummary(coverage: CoverageEntry[]) {
+  const count = (verdict: string) => coverage.filter((e) => e.best_verdict === verdict).length
+  const unanswered = count('Loses')
+  const contested = count('Trades')
+  const plural = (n: number) => `${n} threat${n === 1 ? '' : 's'}`
+
+  if (unanswered) {
+    return { text: `${plural(unanswered)} unanswered`, tone: 'font-medium text-rose-300' }
+  }
+  if (contested) return { text: `${plural(contested)} contested`, tone: 'text-amber-400' }
+  return { text: 'every threat answered', tone: 'text-muted-foreground' }
+}
+
 /**
  * Coverage as a strip of enemies rather than a list of picks.
  *
  * The old panel said "best answer Blacephalon" six times: true, and useless.
  * Coverage exists to show GAPS, so each enemy carries its own best verdict and
  * anything short of a win is called out above the strip.
+ *
+ * The verdicts here are passive -- "Steelix — Dominated" -- because the subject
+ * of a chip is the threat, not our counter. "Steelix Dominates" reads as Steelix
+ * winning.
  */
 function CoverageStrip({
   coverage,
@@ -118,24 +150,14 @@ function CoverageStrip({
   coverage: CoverageEntry[]
   onFocusPick: (pickId: number) => void
 }) {
-  const gaps = coverage.filter(
-    (entry) => entry.best_verdict === 'Loses' || entry.best_verdict === 'Trades',
-  )
+  const summary = coverageSummary(coverage)
 
   return (
     <div className="card-surface flex flex-col gap-2 p-3">
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-center gap-1.5">
         <h3 className="text-muted-foreground text-[11px] font-medium">Coverage</h3>
-        {gaps.length ? (
-          <p className="text-[11px] text-amber-400">
-            {gaps.length} unanswered:{' '}
-            <span className="capitalize">
-              {gaps.map((entry) => entry.enemy_name.replace(/-/g, ' ')).join(', ')}
-            </span>
-          </p>
-        ) : (
-          <p className="text-muted-foreground text-[11px]">every threat answered</p>
-        )}
+        <InfoTip label="What the coverage words mean">{COVERAGE_HELP}</InfoTip>
+        <p className={cn('ml-auto text-[11px]', summary.tone)}>{summary.text}</p>
       </div>
       <ul className="flex flex-wrap gap-1">
         {coverage.map((entry) => (
@@ -143,16 +165,25 @@ function CoverageStrip({
             <button
               type="button"
               onClick={() => onFocusPick(entry.best_answer_id)}
-              title={`${entry.enemy_name}: ${entry.best_verdict} — best answer ${entry.best_answer}`}
+              title={`${entry.enemy_name}: best answer ${entry.best_answer}`}
               className={cn(
-                'flex h-6 items-center gap-1 rounded-full border pr-1.5 pl-0.5',
+                'flex h-6 items-center gap-0.5 rounded-full border pr-1 pl-0.5',
                 'focus-visible:ring-ring hover:brightness-125 focus-visible:ring-2 focus-visible:outline-none',
                 verdictTone(entry.best_verdict).chip,
               )}
             >
               <Sprite src={entry.enemy_sprite_url} alt={entry.enemy_name} size="xs" />
+              {/* Two chips per row only fit if each stays under half the panel,
+                  so the separator and the badge are tight rather than airy. */}
               <DisplayName name={entry.enemy_name} className="text-[10px]" />
-              <VerdictBadge verdict={entry.best_verdict} className="px-1 py-0 text-[9px]" />
+              <span aria-hidden className="text-muted-foreground/60 text-[10px]">
+                —
+              </span>
+              <VerdictBadge
+                verdict={entry.best_verdict}
+                voice="passive"
+                className="px-1 py-0 text-[9px]"
+              />
             </button>
           </li>
         ))}

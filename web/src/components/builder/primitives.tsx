@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
 
+import { verdictLabel, verdictTone } from './verdicts'
+
 /** API names arrive lowercase; capitalising in CSS keeps the data untouched. */
 export function DisplayName({ name, className }: { name: string; className?: string }) {
   return <span className={cn('capitalize', className)}>{name.replace(/-/g, ' ')}</span>
@@ -47,8 +49,8 @@ export function Sprite({
   // The sprites are natively 96x96. Rendering them at exactly that size means
   // one source pixel per CSS pixel -- no scaling artefacts at all -- and the
   // mount supplies the breathing room instead.
-  const mount = { xs: 'size-6', sm: 'size-12', md: 'h-32 w-full', lg: 'h-36 w-full' }[size]
-  const image = { xs: 'size-6', sm: 'size-10', md: 'size-24', lg: 'size-28' }[size]
+  const mount = { xs: 'size-5', sm: 'size-12', md: 'h-32 w-full', lg: 'h-36 w-full' }[size]
+  const image = { xs: 'size-5', sm: 'size-10', md: 'size-24', lg: 'size-28' }[size]
 
   return (
     <div
@@ -92,48 +94,24 @@ export function TypeBadges({ types, className }: { types: string[]; className?: 
 }
 
 /**
- * Verdict colours, in one place.
+ * The verdict for a matchup.
  *
  * Coloured by outcome, never by type: this is analysis, not Pokemon data, and
  * reusing the type palette would suggest the colour meant something about the
- * Pokemon rather than about the fight. The badge, the coverage chips and the
- * summary dots all read from here so they cannot drift apart.
+ * Pokemon rather than about the fight.
+ *
+ * `voice` picks the vocabulary. Active where our counter is the subject, passive
+ * where the enemy is -- see the note in verdicts.ts.
  */
-export const VERDICT_TONE: Record<string, { badge: string; dot: string; chip: string }> = {
-  Dominates: {
-    badge: 'text-emerald-400 bg-emerald-400/12',
-    dot: 'bg-emerald-400',
-    chip: 'border-emerald-400/30 bg-emerald-400/8',
-  },
-  Wins: {
-    badge: 'text-emerald-500/90 bg-emerald-500/10',
-    dot: 'bg-emerald-500/70',
-    chip: 'border-emerald-500/25 bg-emerald-500/6',
-  },
-  Trades: {
-    badge: 'text-amber-400 bg-amber-400/12',
-    dot: 'bg-amber-400',
-    chip: 'border-amber-400/40 bg-amber-400/10',
-  },
-  Loses: {
-    badge: 'text-rose-400/90 bg-rose-400/10',
-    dot: 'bg-rose-400',
-    chip: 'border-rose-400/40 bg-rose-400/10',
-  },
-}
-
-const FALLBACK_TONE = {
-  badge: 'text-muted-foreground bg-muted',
-  dot: 'bg-muted-foreground/40',
-  chip: 'border-border bg-card',
-}
-
-export function verdictTone(verdict: string) {
-  return VERDICT_TONE[verdict] ?? FALLBACK_TONE
-}
-
-/** The verdict for a matchup. */
-export function VerdictBadge({ verdict, className }: { verdict: string; className?: string }) {
+export function VerdictBadge({
+  verdict,
+  voice = 'active',
+  className,
+}: {
+  verdict: string
+  voice?: 'active' | 'passive'
+  className?: string
+}) {
   return (
     <span
       className={cn(
@@ -142,7 +120,7 @@ export function VerdictBadge({ verdict, className }: { verdict: string; classNam
         className,
       )}
     >
-      {verdict}
+      {verdictLabel(verdict, voice)}
     </span>
   )
 }
@@ -165,7 +143,7 @@ export function VerdictDots({
       {answers.map((answer) => (
         <span
           key={answer.enemy_id}
-          title={`${answer.enemy_name}: ${answer.verdict}`}
+          title={`${answer.enemy_name}: ${verdictLabel(answer.verdict, 'active')}`}
           className={cn('size-1.5 rounded-full', verdictTone(answer.verdict).dot)}
         />
       ))}
