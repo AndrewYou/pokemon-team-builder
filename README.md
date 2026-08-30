@@ -2,8 +2,32 @@
 
 Monorepo. `/api` is a FastAPI service, `/web` is a Vite + React frontend.
 
+| | |
+|---|---|
+| **Live UI** | https://pokemon-team-builder-henna.vercel.app/ |
+| **API / Swagger** | https://pokemon-team-builder-production-ced1.up.railway.app/ |
+
 Deployment is wired up before any feature work: two services mean CORS, env
 vars, and two pipelines, and all of those are cheaper to debug on day one.
+
+For the short version -- the four decisions worth defending, on one page --
+see [README_POKEMON.md](README_POKEMON.md). This file is the complete
+reference: every design decision, every trade-off, and the reasoning behind
+each one.
+
+## Contents
+
+- [Layout](#layout) · [Local development](#local-development)
+- [Frontend](#frontend) -- design, layout, interaction, sorting, drag and drop
+- [Swagger is the demo surface](#swagger-is-the-demo-surface)
+- [Data model](#data-model) -- tables, constraints, indexes
+- [Derived layer](#derived-layer) -- the type chart and the in-memory cache
+- [Alerts](#alerts)
+- [Identity: a header, and why that is enough](#identity-a-header-and-why-that-is-enough)
+- [Application routers](#application-routers) -- catalog, teams, counter-team
+- [The change-detection demo](#the-change-detection-demo)
+- [Normalisation and change detection](#normalisation-and-change-detection)
+- [Seeding](#seeding) · [Environment](#environment) · [Deploy](#deploy)
 
 ## Layout
 
@@ -200,6 +224,54 @@ cheaper than noticing it during a demo. Two of the three conditions are
 currently impossible by construction -- `type1` and `raw` are `NOT NULL` -- so
 they guard against schema drift rather than against today's data.
 
+## Data model
+
+Twelve tables in three groups. Reference data is a snapshot of PokéAPI; user
+data is ours; sync data is the audit trail that makes change detection
+answerable.
+
+| Table | Group | What it holds |
+|---|---|---|
+| `pokemon` | reference | One row per species: base stats, both types, sprite URL, and the four section hashes |
+| `move` | reference | Name, type, damage class, power, accuracy, content hash |
+| `pokemon_move` | reference | Join table, ~79k rows |
+| `pokemon_ability` | reference | Join table; stored, not yet used in scoring |
+| `type_chart` | reference | 324 rows: every attacking/defending pairing |
+| `app_user` | user | A UUID (`gen_random_uuid()` server-side) and `created_at`. Named `app_user` because `user` is reserved in Postgres |
+| `team` | user | Name, owner, timestamps |
+| `team_member` | user | Team, Pokemon, and slot 1-6 |
+| `sync_run` | sync | One row per run: `source` (`live` / `fixture` / `stale`), `records_scanned`, `changes_found`, start/finish, status |
+| `data_change` | sync | One row per field-level difference: `entity_type`, `entity_id`, `field_path`, `old_value`, `new_value`, `detected_at` |
+| `change_ack` | sync | Which user dismissed which change |
+| `job` | ops | Background job status for the long-running admin endpoints |
+
+**Constraints live in the database, not in Python.** The application is not the
+only thing that will ever write to this schema, and a check that exists only in
+a service function is a check that a migration, a psql session, or a second
+process can walk straight past.
+
+- `UNIQUE(team_id, slot)` -- two Pokemon cannot occupy one slot.
+- `UNIQUE(team_id, pokemon_id)` -- no duplicates on a roster.
+- `CHECK (slot BETWEEN 1 AND 6)` -- the roster limit, enforced where it cannot be
+  bypassed.
+- `team_member.pokemon_id` is `ON DELETE RESTRICT`: deleting a species out from
+  under a saved team should fail loudly, not silently empty someone's roster.
+  Everything else cascades, because a deleted team's members are meaningless.
+- A **partial unique index** on `job` allows only one running job per kind, so
+  two clicks on "Seed" cannot start two seeds. The guard is the index; the 409
+  the API returns is just the polite version of it.
+
+Indexes are for the queries that actually run: `(type1)` and `(type2)` for the
+type filter, `(kind, created_at DESC)` for the job list, `(entity_type,
+entity_id)` for change attribution, and a `text_pattern_ops` index on
+`pokemon.name` for prefix search -- the default collation-aware opclass cannot
+serve `LIKE 'pika%'`, and `ILIKE` forces a sequential scan regardless, so the
+search lowercases in the application and queries with `LIKE`.
+
+Every sort in the catalog ends with `id ASC`. Without a total order, keyset
+pagination silently drops or repeats rows across pages whenever the sort key
+ties -- and base stat totals tie constantly.
+
 ## Derived layer
 
 Type lookups, defensive vectors, and later the best-move lists are computed at
@@ -347,6 +419,13 @@ in the `X-User-Id` response header for the client to store.
 can send someone else's UUID and read their teams. That is acceptable here
 because nothing stored is private or valuable -- a list of Pokemon names -- and
 adding real authentication would be scope this take-home does not ask for.
+
+**The upgrade path is the point.** `app_user` is already the right shape for
+real accounts: add `username` and `password_hash`, swap the UUID for an
+authenticated id inside `get_current_user`, and nothing downstream changes --
+every user-scoped route already consumes `current_user.id` and would not be
+touched. Roughly half a day, deferred in favour of the counter-team algorithm
+and change detection.
 
 A header rather than a cookie because the frontend and API sit on different
 origins, and cross-origin cookies mean credentialed CORS, which means giving up
@@ -584,6 +663,25 @@ Immunity is capped rather than infinite: a pick that takes nothing from the
 enemy would be a division by zero, so it scores one step above the best
 resistance. It is stateless and never touches the database -- the display fields
 it needs live in the derived cache.
+
+### Endpoint map
+
+Public surface is small; most of the URL space is the admin toolkit that makes
+the sync story demonstrable.
+
+| Group | Endpoints |
+|---|---|
+| catalog | `GET /pokemon` (cursor-paginated, filterable, sortable), `GET /pokemon/{id}`, `GET /pokemon/random` |
+| teams | `GET/POST /teams`, `GET/PATCH/DELETE /teams/{id}`, `PUT /teams/{id}/members` |
+| counter-team | `POST /counter-team` |
+| alerts | `GET /alerts`, `POST /alerts/{change_id}/dismiss`, `POST /alerts/dismiss-all` |
+| health | `GET /health` |
+| admin | seeding, sync, drift, stats, job polling, demo reset, and the `debug/*` endpoints that show the working behind one matchup, one normalisation, or one defensive vector |
+
+`PUT /teams/{id}/members` replaces the whole roster in one transaction rather
+than diffing. The submitted array is the desired end state, and a minimal set of
+moves would have to sequence updates around `UNIQUE(team_id, slot)` for no
+benefit.
 
 ## The change-detection demo
 
