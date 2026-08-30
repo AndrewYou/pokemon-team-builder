@@ -1,6 +1,12 @@
-import { useDroppable } from '@dnd-kit/core'
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { useDndContext, useDroppable } from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { GripVertical } from 'lucide-react'
 
 import type { TeamMember } from '@/api/client'
 import { cn } from '@/lib/utils'
@@ -12,22 +18,33 @@ export const MAX_SLOTS = 6
 /**
  * Filled: a solid card, tinted with the occupant's type.
  *
- * Deliberately a different visual language from an empty slot. When both read
- * as "something is missing", the moment a Pokemon lands is ambiguous.
+ * The whole row is the drag handle -- sprite, number, name, badges and the
+ * padding between them. Only the sprite used to be, which meant hitting a
+ * 48px square precisely to reorder.
+ *
+ * The remove button is deliberately outside the activator. A remove control
+ * that drags instead of removing is worse than no drag at all.
  */
 function FilledSlot({
   member,
   index,
+  displayIndex,
   onRemove,
 }: {
   member: TeamMember
   index: number
+  displayIndex: number
   onRemove: (pokemonId: number) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: `member-${member.pokemon_id}`,
-    data: { member },
-  })
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `member-${member.pokemon_id}`, data: { member, index } })
   const primary = member.types[0]
 
   return (
@@ -38,41 +55,61 @@ function FilledSlot({
         transform: CSS.Transform.toString(transform),
         transition,
         background: 'color-mix(in oklch, var(--type) 7%, var(--card))',
+        // The gap the row left behind, rather than an empty space that reads
+        // as a rendering glitch.
+        ...(isDragging
+          ? { outline: '2px dashed var(--border)', outlineOffset: '-2px', background: 'transparent' }
+          : {}),
       }}
       className={cn(
-        'border-border relative flex h-[60px] items-center gap-2.5 rounded-[12px] border px-2',
+        'border-border group/slot relative flex min-h-11 items-center rounded-[12px] border',
         isDragging && 'z-10 opacity-40',
       )}
     >
       <span
         aria-hidden
         className="absolute inset-y-2 left-0 w-0.5 rounded-full"
-        style={{ background: 'var(--type)' }}
+        style={{ background: isDragging ? 'transparent' : 'var(--type)' }}
       />
-      <span className="text-muted-foreground tabular w-3 shrink-0 text-center text-[11px]">
-        {index + 1}
-      </span>
-      {/* The drag handle is the sprite, and it is a real button so keyboard
-          users can lift it. Reordering is where dragging genuinely beats
-          clicking, and it is where "order matters" lives. */}
-      <button
-        type="button"
+
+      {/* Everything except the remove control activates a drag. */}
+      <div
+        ref={setActivatorNodeRef}
         {...listeners}
         {...attributes}
-        aria-label={`${member.name}, slot ${index + 1}. Press space to reorder.`}
-        className="focus-visible:ring-ring shrink-0 cursor-grab rounded-[10px] focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing"
+        aria-label={`${member.name}, position ${displayIndex + 1} of ${MAX_SLOTS}. Press space to reorder.`}
+        className={cn(
+          'flex min-w-0 flex-1 cursor-grab touch-none items-center gap-2 py-1.5 pr-1 pl-1.5',
+          'focus-visible:ring-ring rounded-[12px] focus-visible:ring-2 focus-visible:outline-none',
+          'active:cursor-grabbing',
+        )}
       >
+        {/* A cue, not the hit area. The row already works everywhere. */}
+        <GripVertical
+          aria-hidden
+          className="text-muted-foreground/50 size-3.5 shrink-0 opacity-0 transition-opacity group-hover/slot:opacity-100 [@media(hover:none)]:opacity-100"
+        />
+        <span className="text-muted-foreground tabular w-3 shrink-0 text-center text-[11px]">
+          {displayIndex + 1}
+        </span>
         <Sprite src={member.sprite_url} alt={member.name} size="sm" type={primary} />
-      </button>
-      <div className="min-w-0 flex-1">
-        <DisplayName name={member.name} className="font-display block truncate text-xs font-medium" />
-        <TypeBadges types={member.types} className="mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <DisplayName
+            name={member.name}
+            className="font-display block truncate text-xs font-medium"
+          />
+          <TypeBadges types={member.types} className="mt-0.5" />
+        </div>
       </div>
+
       <button
         type="button"
         onClick={() => onRemove(member.pokemon_id)}
+        // Belt and braces alongside sitting outside the activator: a stray
+        // press here must never be read as the start of a drag.
+        onPointerDown={(event) => event.stopPropagation()}
         aria-label={`Remove ${member.name}`}
-        className="text-muted-foreground hover:text-foreground hover:bg-muted grid size-6 shrink-0 place-items-center rounded-[6px] text-base leading-none"
+        className="text-muted-foreground hover:text-foreground hover:bg-muted mr-1.5 grid size-8 shrink-0 place-items-center rounded-[6px] text-base leading-none"
       >
         ×
       </button>
@@ -88,7 +125,7 @@ function FilledSlot({
  */
 function PendingSlot({ index }: { index: number }) {
   return (
-    <li className="card-surface flex h-[60px] items-center gap-2.5 px-2">
+    <li className="card-surface flex min-h-11 items-center gap-2.5 px-2 py-2">
       <span className="text-muted-foreground tabular w-3 shrink-0 text-center text-[11px]">
         {index + 1}
       </span>
@@ -110,7 +147,7 @@ function EmptySlot({ index, activeType }: { index: number; activeType?: string }
       data-type={activeType}
       aria-label={`Empty slot ${index + 1}`}
       className={cn(
-        'border-border/50 text-muted-foreground/70 flex h-[60px] items-center gap-2.5 rounded-[12px]',
+        'border-border/50 text-muted-foreground/70 flex min-h-11 items-center gap-2.5 rounded-[12px] py-2',
         'border border-dashed px-2 transition-all duration-150',
       )}
       style={
@@ -138,6 +175,20 @@ export function TeamSlots({
   activeType?: string
   onRemove: (pokemonId: number) => void
 }) {
+  const { active, over } = useDndContext()
+
+  // Numbers follow the position a row is heading to, not the one it came from.
+  // The list itself is left alone -- dnd-kit previews movement with transforms,
+  // and reordering the array as well would move everything twice.
+  const displayOrder = (() => {
+    const ids = members.map((member) => `member-${member.pokemon_id}`)
+    if (!active || !over || active.id === over.id) return ids
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from === -1 || to === -1) return ids
+    return arrayMove(ids, from, to)
+  })()
+
   const empties = Math.max(0, MAX_SLOTS - members.length)
   return (
     <SortableContext
@@ -146,13 +197,12 @@ export function TeamSlots({
     >
       <ul className="flex flex-col gap-1.5">
         {members.map((member, index) =>
-          // A member without display fields cannot be drawn as filled; the
-          // pending shape is the honest thing to show.
           member.name ? (
             <FilledSlot
               key={member.pokemon_id}
               member={member}
               index={index}
+              displayIndex={displayOrder.indexOf(`member-${member.pokemon_id}`)}
               onRemove={onRemove}
             />
           ) : (

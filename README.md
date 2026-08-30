@@ -157,8 +157,24 @@ sortable. A drop produces a whole new ordering, which is sent as one debounced
 `PUT` with an optimistic update, so a card lands where it was dropped rather than
 snapping back and jumping into place when the server answers.
 
-Keyboard dragging is enabled, not left mouse-only: cards are real buttons, and
-`KeyboardSensor` picks them up with space and moves them with arrows.
+The whole slot row is the drag handle -- sprite, number, name, badges and the
+padding between them -- with the remove button deliberately outside the
+activator, since a remove control that drags instead of removing is worse than
+no drag at all. A grip icon appears on hover as a cue, not as the hit area.
+
+Mouse and touch use separate sensors because they need different activation
+rules: 8px of movement on desktop, where a press-and-hold would feel sluggish,
+and a 200ms hold on touch, where distance-based activation swallows taps and
+scrolls as drags.
+
+Slot numbers renumber during the drag rather than travelling with the rows. The
+list itself is left alone -- dnd-kit previews movement with transforms, and
+reordering the array as well would move everything twice -- so the numbers come
+from the projected order instead.
+
+Keyboard dragging is enabled, not left mouse-only: space lifts, arrows move,
+escape cancels, and moves are announced as "Charizard moved to position 2 of 4"
+rather than dnd-kit's default "draggable item member-6".
 
 ## Swagger is the demo surface
 

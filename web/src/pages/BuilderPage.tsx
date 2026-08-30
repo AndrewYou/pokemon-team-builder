@@ -3,16 +3,20 @@ import {
   DragOverlay,
   KeyboardSensor,
   MeasuringStrategy,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   useSensor,
   useSensors,
+  type Announcements,
   type DragEndEvent,
   type DragStartEvent,
+  type ScreenReaderInstructions,
 } from '@dnd-kit/core'
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { GripVertical } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 import type { PokemonSummary, TeamMember } from '@/api/client'
@@ -25,7 +29,7 @@ import {
 } from '@/api/queries'
 import { Catalog } from '@/components/builder/Catalog'
 import { CardBody } from '@/components/builder/PokemonCard'
-import { ErrorState, Sprite } from '@/components/builder/primitives'
+import { ErrorState, Sprite, TypeBadges } from '@/components/builder/primitives'
 import { TeamBar, TeamRail } from '@/components/builder/TeamDock'
 import { TeamPanel } from '@/components/builder/TeamPanel'
 import { TeamSheet } from '@/components/builder/TeamSheet'
@@ -33,6 +37,7 @@ import { MAX_SLOTS } from '@/components/builder/TeamSlots'
 import { NotificationBell } from '@/components/builder/NotificationBell'
 import { ThemeToggle } from '@/components/builder/ThemeToggle'
 import { useSelectedTeam } from '@/lib/selected-team'
+import { cn } from '@/lib/utils'
 
 const SAVE_DEBOUNCE_MS = 400
 
@@ -108,9 +113,53 @@ export default function BuilderPage() {
     [members, persist],
   )
 
+  // Mouse and touch are separate sensors rather than one PointerSensor,
+  // because they need different activation rules. A press-and-hold on desktop
+  // makes reordering feel sluggish; distance-based activation on touch
+  // swallows taps and scrolls as drags.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  const positionOf = useCallback(
+    (id: string | number) =>
+      members.findIndex((member) => `member-${member.pokemon_id}` === String(id)) + 1,
+    [members],
+  )
+
+  const nameOf = useCallback(
+    (id: string | number) =>
+      members.find((member) => `member-${member.pokemon_id}` === String(id))?.name ?? 'Pokémon',
+    [members],
+  )
+
+  // dnd-kit's defaults describe items as "draggable item member-25". These say
+  // what a person would say.
+  const announcements: Announcements = useMemo(
+    () => ({
+      onDragStart: ({ active }) =>
+        `Picked up ${nameOf(active.id)}, position ${positionOf(active.id)} of ${members.length}.`,
+      onDragOver: ({ active, over }) =>
+        over && over.id !== active.id
+          ? `${nameOf(active.id)} moved to position ${positionOf(over.id)} of ${members.length}.`
+          : undefined,
+      onDragEnd: ({ active, over }) =>
+        over
+          ? `${nameOf(active.id)} dropped at position ${positionOf(over.id)} of ${members.length}.`
+          : `${nameOf(active.id)} returned to its position.`,
+      onDragCancel: ({ active }) => `Reorder cancelled. ${nameOf(active.id)} returned.`,
+    }),
+    [members.length, nameOf, positionOf],
+  )
+
+  const screenReaderInstructions: ScreenReaderInstructions = useMemo(
+    () => ({
+      draggable:
+        'Press space to pick up a Pokémon, arrow up and down to move it, space to drop, escape to cancel.',
+    }),
+    [],
   )
 
   function handleDragStart(event: DragStartEvent) {
@@ -164,6 +213,7 @@ export default function BuilderPage() {
       // Droppable rects are cached, and the grid scrolls underneath a fixed
       // panel. Without continuous measuring the slots silently stop accepting
       // drops as soon as the grid moves.
+      accessibility={{ announcements, screenReaderInstructions }}
       measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       // Scoped to the grid. Left on the window, dragging near the panel edge
       // lurches the whole page.
@@ -220,18 +270,35 @@ export default function BuilderPage() {
       {createPortal(
         <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.16,1,0.3,1)' }}>
           {dragging ? (
-            <div className="w-[180px] rotate-2 scale-[1.04] cursor-grabbing">
+            <div
+              className={cn(
+                'cursor-grabbing',
+                'stats' in dragging ? 'w-[180px] rotate-2 scale-[1.04]' : 'w-[300px]',
+              )}
+            >
               {'stats' in dragging ? (
                 <CardBody pokemon={dragging} dragging />
               ) : (
-                <div className="card-surface flex items-center gap-3 p-2 shadow-2xl">
+                // Mirrors the row it was lifted from, so the drag reads as
+                // picking that row up rather than swapping it for a token.
+                <div
+                  data-type={dragging.types[0]}
+                  className="border-border flex rotate-1 scale-[1.02] items-center gap-2 rounded-[12px] border py-1.5 pr-3 pl-1.5 shadow-2xl"
+                  style={{ background: 'color-mix(in oklch, var(--type) 7%, var(--card))' }}
+                >
+                  <GripVertical aria-hidden className="text-muted-foreground/50 size-3.5 shrink-0" />
                   <Sprite
                     src={dragging.sprite_url}
                     alt={dragging.name}
                     size="sm"
                     type={dragging.types[0]}
                   />
-                  <span className="font-display truncate text-sm capitalize">{dragging.name}</span>
+                  <div className="min-w-0">
+                    <span className="font-display block truncate text-xs font-medium capitalize">
+                      {dragging.name}
+                    </span>
+                    <TypeBadges types={dragging.types} className="mt-0.5" />
+                  </div>
                 </div>
               )}
             </div>
