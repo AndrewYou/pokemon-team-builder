@@ -132,11 +132,13 @@ Given an opposing team of N Pokémon, return N counters.
    (Dominates / Wins / Trades / Loses). The continuous score still orders the
    results underneath, because margin is coarse enough that many picks tie.
 
-**No tuning parameter.** An earlier version decayed a per-enemy urgency weight
-after each pick. It worked, but introduced a constant we'd have had to justify.
-Here diminishing returns falls out of the structure: the objective — sum over
-enemies of the best answer on the roster — is monotone and submodular, so greedy
-carries the standard (1 − 1/e) bound. Removing the parameter beat tuning it.
+**No tuning parameter.** An earlier version gave each enemy an urgency weight
+and decayed it after every pick. It worked, but the decay rate was a constant
+we'd have had to justify and then tune. Scoring on improvement gives the same
+diminishing returns for free, and the objective that results is submodular —
+which means greedy selection is guaranteed to score at least 63% of the best
+possible team (the standard 1 − 1/e bound). Removing the parameter beat tuning
+it.
 
 Coverage scores each enemy by its single best answer rather than the sum, since
 you only need one answer per threat; summing rewards redundancy and recreates
