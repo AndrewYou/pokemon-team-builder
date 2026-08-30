@@ -3,8 +3,9 @@
 - **Live UI** — https://pokemon-team-builder-henna.vercel.app/
 - **API / Swagger** — https://pokemon-team-builder-production-ced1.up.railway.app/
 
-FastAPI + Postgres on Railway, React + Vite on Vercel. Full engineering detail is
-in [README.md](README.md); this page is the four decisions worth defending.
+FastAPI on Railway, React + Vite on Vercel, Postgres on Neon. Full engineering
+detail is in [README.md](README.md); this page is the four decisions worth
+defending.
 
 ---
 
@@ -29,9 +30,15 @@ favour of the counter-team algorithm and change detection.
 
 ## 2. Database design and management
 
-**Snapshot, don't proxy.** PokéAPI is mirrored into Postgres rather than called
-per request. This wasn't for latency; it's the prerequisite for change
-detection. You cannot diff against an API you have no prior copy of.
+Postgres, hosted on **Neon**. Serverless Postgres suits a workload that is
+bursty and read-heavy, and its connection pooler matters here because the API
+runs asyncpg against a pooled endpoint while Alembic connects synchronously over
+psycopg — two drivers, one database, which is why the service takes two
+connection URLs.
+
+**Snapshot, don't proxy.** PokéAPI is mirrored into Neon rather than called per
+request. This wasn't for latency; it's the prerequisite for change detection.
+You cannot diff against an API you have no prior copy of.
 
 **Store base stats, derive level 50.** Stats persist exactly as PokéAPI returns
 them. Level-50 conversion happens in the derived layer, at read time. Storing
