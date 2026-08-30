@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from api.counterteam import scoring
 from api.derived.cache import DerivedCache
 from api.schemas import (
@@ -32,33 +34,48 @@ def build_counter_team(cache: DerivedCache, enemy_ids: list[int]) -> CounterTeam
     enemies = list(seen)
     enemy_rows = [cache.pokemon_index[pid] for pid in enemies]
 
-    scores, offense, taken = scoring.score_matrix(cache, enemy_rows)
-    # Equal size is the requirement, so it is derived rather than configured.
+    grid = scoring.score_matrix(cache, enemy_rows)
+    scores = grid.scores
     chosen_rows = scoring.select_team(
-        scores, size=len(enemy_rows), type_mask=scoring.candidate_type_mask(cache)
+        scores,
+        size=len(enemy_rows),
+        type_mask=scoring.candidate_type_mask(cache),
+        stat_totals=cache.totals,
+        ids=np.array(cache.pokemon_ids, dtype=np.int64),
     )
 
     picks: list[CounterPick] = []
     for row in chosen_rows:
         meta = cache.meta[row]
-        answers = [
-            CounterAnswer(
-                enemy_id=cache.meta[enemy_row].id,
-                enemy_name=cache.meta[enemy_row].name,
-                multiplier=round(float(scores[row, column]), 4),
-                rationale=scoring.rationale(
-                    cache,
-                    row,
-                    enemy_row,
-                    scoring.Matchup(
-                        score=float(scores[row, column]),
-                        offense=float(offense[row, column]),
-                        defense_taken=float(taken[row, column]),
-                    ),
-                ),
+        answers = []
+        for column, enemy_row in enumerate(enemy_rows):
+            moves = cache.moves[row]
+            outgoing = float(grid.outgoing[row, column])
+            chosen_move = (
+                moves[int(grid.move_index[row, column])] if moves and outgoing > 0 else None
             )
-            for column, enemy_row in enumerate(enemy_rows)
-        ]
+            matchup = scoring.Matchup(
+                score=float(scores[row, column]),
+                outgoing=outgoing,
+                incoming=float(grid.incoming[row, column]),
+                move_name=chosen_move.name if chosen_move else "",
+                move_type=chosen_move.type if chosen_move else "",
+                damage_class=chosen_move.damage_class if chosen_move else "",
+                outspeeds=bool(grid.outspeeds[row, column]),
+            )
+            answers.append(
+                CounterAnswer(
+                    enemy_id=cache.meta[enemy_row].id,
+                    enemy_name=cache.meta[enemy_row].name,
+                    multiplier=round(matchup.score, 4),
+                    rationale=scoring.rationale(cache, row, enemy_row, matchup),
+                    move_name=matchup.move_name,
+                    damage_class=matchup.damage_class,
+                    damage_fraction=round(matchup.outgoing, 4),
+                    turns_to_ko=matchup.turns_to_ko,
+                    outspeeds=matchup.outspeeds,
+                )
+            )
         picks.append(
             CounterPick(
                 id=meta.id,

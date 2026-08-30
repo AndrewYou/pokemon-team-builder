@@ -712,18 +712,34 @@ class CounterAnswer(BaseModel):
     enemy_id: int
     enemy_name: str
     multiplier: float = Field(
-        description="The matchup score: offensive multiplier divided by the "
-        "worst multiplier the enemy lands back. Higher is better."
+        description="The matchup score in [0, 1]: how much of the exchange this "
+        "pick wins, from the damage it deals against the damage it takes."
     )
     rationale: str = Field(description="How the score was arrived at.")
+    # Added by the damage model. The shape is unchanged: these are new fields
+    # inside the objects the frontend already renders.
+    move_name: str = Field(default="", description="The move chosen against this enemy.")
+    damage_class: str = Field(default="", description="physical or special.")
+    damage_fraction: float = Field(
+        default=0.0, description="Share of the enemy's health removed per turn."
+    )
+    turns_to_ko: int = Field(
+        default=0, description="Rounded for display only; scoring uses the fraction."
+    )
+    outspeeds: bool = Field(default=False, description="Whether this pick moves first.")
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "enemy_id": 6,
                 "enemy_name": "charizard",
-                "multiplier": 4.0,
-                "rationale": "rock hits fire/flying for 4x; takes 1x back",
+                "multiplier": 0.79,
+                "rationale": "stone-edge (rock) takes 96% per turn, 2 to KO; takes 25% back",
+                "move_name": "stone-edge",
+                "damage_class": "physical",
+                "damage_fraction": 0.96,
+                "turns_to_ko": 2,
+                "outspeeds": False,
             }
         }
     )
@@ -749,8 +765,13 @@ class CounterPick(BaseModel):
                     {
                         "enemy_id": 6,
                         "enemy_name": "charizard",
-                        "multiplier": 4.0,
-                        "rationale": "rock hits fire/flying for 4x; takes 1x back",
+                        "multiplier": 0.79,
+                        "rationale": "stone-edge (rock) takes 96% per turn, 2 to KO",
+                        "move_name": "stone-edge",
+                        "damage_class": "physical",
+                        "damage_fraction": 0.96,
+                        "turns_to_ko": 2,
+                        "outspeeds": False,
                     }
                 ],
             }
@@ -1278,6 +1299,66 @@ class AgedChangeResponse(BaseModel):
                 "detected_at_before": "2026-08-29T14:05:08Z",
                 "detected_at_after": "2026-08-21T14:05:08Z",
                 "still_in_window": False,
+            }
+        }
+    )
+
+
+class MatchupDetail(BaseModel):
+    """Every number behind one attacker-versus-defender pairing."""
+
+    attacker_id: int
+    attacker_name: str
+    attacker_types: list[str]
+    defender_id: int
+    defender_name: str
+    defender_types: list[str]
+
+    move_name: str
+    move_type: str
+    damage_class: str
+    move_power: int
+    move_accuracy: int | None
+
+    attack_stat: int = Field(description="Attack or Special Attack, at level 50.")
+    defense_stat: int = Field(description="Defense or Special Defense, at level 50.")
+    defender_hp: int
+    stab: float
+    type_multiplier: float
+
+    raw_damage: float
+    damage_fraction: float = Field(description="What the scorer uses. Continuous.")
+    turns_to_ko: int = Field(description="Rounded, for display only.")
+
+    attacker_speed: int
+    defender_speed: int
+    outspeeds: bool
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "attacker_id": 6,
+                "attacker_name": "charizard",
+                "attacker_types": ["fire", "flying"],
+                "defender_id": 9,
+                "defender_name": "blastoise",
+                "defender_types": ["water"],
+                "move_name": "wing-attack",
+                "move_type": "flying",
+                "damage_class": "physical",
+                "move_power": 60,
+                "move_accuracy": 100,
+                "attack_stat": 89,
+                "defense_stat": 105,
+                "defender_hp": 139,
+                "stab": 1.5,
+                "type_multiplier": 1.0,
+                "raw_damage": 25.8,
+                "damage_fraction": 0.1856,
+                "turns_to_ko": 6,
+                "attacker_speed": 105,
+                "defender_speed": 83,
+                "outspeeds": True,
             }
         }
     )

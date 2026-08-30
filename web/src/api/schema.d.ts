@@ -684,6 +684,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/debug/matchup-detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every number behind one pairing
+         * @description The full damage breakdown for one attacker against one defender: the move chosen from the collapsed movepool, both stats used, the multiplier and STAB, the raw damage, the continuous fraction the scorer works on, the rounded turn count shown to users, and the speed comparison.
+         *
+         *     Try `attacker=248&defender=6` -- Tyranitar's rock move is 4x into Charizard's fire/flying.
+         */
+        get: operations["debug_matchup_detail_admin_debug_matchup_detail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -973,10 +995,15 @@ export interface components {
          *     Phase 9 adds move, turns-to-KO, and speed fields here without changing the
          *     surrounding shape.
          * @example {
+         *       "damage_class": "physical",
+         *       "damage_fraction": 0.96,
          *       "enemy_id": 6,
          *       "enemy_name": "charizard",
-         *       "multiplier": 4,
-         *       "rationale": "rock hits fire/flying for 4x; takes 1x back"
+         *       "move_name": "stone-edge",
+         *       "multiplier": 0.79,
+         *       "outspeeds": false,
+         *       "rationale": "stone-edge (rock) takes 96% per turn, 2 to KO; takes 25% back",
+         *       "turns_to_ko": 2
          *     }
          */
         CounterAnswer: {
@@ -986,7 +1013,7 @@ export interface components {
             enemy_name: string;
             /**
              * Multiplier
-             * @description The matchup score: offensive multiplier divided by the worst multiplier the enemy lands back. Higher is better.
+             * @description The matchup score in [0, 1]: how much of the exchange this pick wins, from the damage it deals against the damage it takes.
              */
             multiplier: number;
             /**
@@ -994,6 +1021,36 @@ export interface components {
              * @description How the score was arrived at.
              */
             rationale: string;
+            /**
+             * Move Name
+             * @description The move chosen against this enemy.
+             * @default
+             */
+            move_name: string;
+            /**
+             * Damage Class
+             * @description physical or special.
+             * @default
+             */
+            damage_class: string;
+            /**
+             * Damage Fraction
+             * @description Share of the enemy's health removed per turn.
+             * @default 0
+             */
+            damage_fraction: number;
+            /**
+             * Turns To Ko
+             * @description Rounded for display only; scoring uses the fraction.
+             * @default 0
+             */
+            turns_to_ko: number;
+            /**
+             * Outspeeds
+             * @description Whether this pick moves first.
+             * @default false
+             */
+            outspeeds: boolean;
         };
         /**
          * CounterPick
@@ -1001,10 +1058,15 @@ export interface components {
          * @example {
          *       "answers": [
          *         {
+         *           "damage_class": "physical",
+         *           "damage_fraction": 0.96,
          *           "enemy_id": 6,
          *           "enemy_name": "charizard",
-         *           "multiplier": 4,
-         *           "rationale": "rock hits fire/flying for 4x; takes 1x back"
+         *           "move_name": "stone-edge",
+         *           "multiplier": 0.79,
+         *           "outspeeds": false,
+         *           "rationale": "stone-edge (rock) takes 96% per turn, 2 to KO",
+         *           "turns_to_ko": 2
          *         }
          *       ],
          *       "id": 248,
@@ -1538,6 +1600,97 @@ export interface components {
             started_at?: string | null;
             /** Finished At */
             finished_at?: string | null;
+        };
+        /**
+         * MatchupDetail
+         * @description Every number behind one attacker-versus-defender pairing.
+         * @example {
+         *       "attack_stat": 89,
+         *       "attacker_id": 6,
+         *       "attacker_name": "charizard",
+         *       "attacker_speed": 105,
+         *       "attacker_types": [
+         *         "fire",
+         *         "flying"
+         *       ],
+         *       "damage_class": "physical",
+         *       "damage_fraction": 0.1856,
+         *       "defender_hp": 139,
+         *       "defender_id": 9,
+         *       "defender_name": "blastoise",
+         *       "defender_speed": 83,
+         *       "defender_types": [
+         *         "water"
+         *       ],
+         *       "defense_stat": 105,
+         *       "move_accuracy": 100,
+         *       "move_name": "wing-attack",
+         *       "move_power": 60,
+         *       "move_type": "flying",
+         *       "outspeeds": true,
+         *       "raw_damage": 25.8,
+         *       "stab": 1.5,
+         *       "turns_to_ko": 6,
+         *       "type_multiplier": 1
+         *     }
+         */
+        MatchupDetail: {
+            /** Attacker Id */
+            attacker_id: number;
+            /** Attacker Name */
+            attacker_name: string;
+            /** Attacker Types */
+            attacker_types: string[];
+            /** Defender Id */
+            defender_id: number;
+            /** Defender Name */
+            defender_name: string;
+            /** Defender Types */
+            defender_types: string[];
+            /** Move Name */
+            move_name: string;
+            /** Move Type */
+            move_type: string;
+            /** Damage Class */
+            damage_class: string;
+            /** Move Power */
+            move_power: number;
+            /** Move Accuracy */
+            move_accuracy: number | null;
+            /**
+             * Attack Stat
+             * @description Attack or Special Attack, at level 50.
+             */
+            attack_stat: number;
+            /**
+             * Defense Stat
+             * @description Defense or Special Defense, at level 50.
+             */
+            defense_stat: number;
+            /** Defender Hp */
+            defender_hp: number;
+            /** Stab */
+            stab: number;
+            /** Type Multiplier */
+            type_multiplier: number;
+            /** Raw Damage */
+            raw_damage: number;
+            /**
+             * Damage Fraction
+             * @description What the scorer uses. Continuous.
+             */
+            damage_fraction: number;
+            /**
+             * Turns To Ko
+             * @description Rounded, for display only.
+             */
+            turns_to_ko: number;
+            /** Attacker Speed */
+            attacker_speed: number;
+            /** Defender Speed */
+            defender_speed: number;
+            /** Outspeeds */
+            outspeeds: boolean;
         };
         /**
          * MatchupResponse
@@ -3892,6 +4045,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    debug_matchup_detail_admin_debug_matchup_detail_get: {
+        parameters: {
+            query: {
+                /** @description Attacking Pokemon id. */
+                attacker: number;
+                /** @description Defending Pokemon id. */
+                defender: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchupDetail"];
+                };
+            };
+            /** @description Missing or invalid admin credentials. Defaults are admin / pokemon. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "Invalid or missing admin credentials"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No Pokemon with that id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "Pokemon not found"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The derived cache is not built, or the type chart is incomplete. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "detail": "Derived cache is not built. Seed the database (POST /admin/seed), then rebuild with POST /admin/cache/rebuild."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

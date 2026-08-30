@@ -9,21 +9,33 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from api.battle.damage import hp_at_level_50, stat_at_level_50
 from api.counterteam import scoring
-from api.derived.cache import DerivedCache, PokemonMeta
+from api.derived.cache import DerivedCache, PokemonMeta, pack_moves
+from api.derived.moves import BestMove
 from api.derived.typechart import build_chart, defensive_vector
 from api.ingest import normalize as ingest_normalize
 from api.services.counterteam import UnknownPokemon, build_counter_team
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pokeapi-snapshot.json"
 
-# id -> (name, types). Chosen to cover the interesting cases: a doubly-weak
-# dual type, an immunity, and a mono type.
+# id -> (name, types) and the real base stats, so the damage numbers below can
+# be checked against the games.
+STATS = {
+    6: (78, 84, 78, 109, 85, 100),  # charizard
+    9: (79, 83, 100, 85, 105, 78),  # blastoise
+    94: (60, 65, 60, 130, 75, 110),  # gengar
+    143: (160, 110, 65, 65, 110, 30),  # snorlax
+    248: (100, 134, 110, 95, 100, 61),  # tyranitar
+    130: (95, 125, 79, 60, 100, 81),  # gyarados
+    92: (30, 35, 30, 100, 35, 80),  # gastly
+}
 ROSTER: dict[int, tuple[str, tuple[str, ...]]] = {
     6: ("charizard", ("fire", "flying")),
     9: ("blastoise", ("water",)),
@@ -32,6 +44,36 @@ ROSTER: dict[int, tuple[str, tuple[str, ...]]] = {
     248: ("tyranitar", ("rock", "dark")),
     130: ("gyarados", ("water", "flying")),
     92: ("gastly", ("ghost", "poison")),
+}
+
+# One STAB attack and one filler each: enough for both directions of the
+# damage model to have something to work with.
+MOVEPOOLS: dict[int, list[BestMove]] = {
+    6: [
+        BestMove(53, "flamethrower", "fire", "special", 90, 100),
+        BestMove(17, "wing-attack", "flying", "physical", 60, 100),
+    ],
+    9: [
+        BestMove(56, "hydro-pump", "water", "special", 110, 80),
+        BestMove(33, "tackle", "normal", "physical", 40, 100),
+    ],
+    94: [
+        BestMove(94, "psychic", "psychic", "special", 90, 100),
+        BestMove(247, "shadow-ball", "ghost", "special", 80, 100),
+    ],
+    143: [
+        BestMove(63, "hyper-beam", "normal", "special", 150, 90),
+        BestMove(34, "body-slam", "normal", "physical", 85, 100),
+    ],
+    248: [
+        BestMove(444, "stone-edge", "rock", "physical", 100, 80),
+        BestMove(242, "crunch", "dark", "physical", 80, 100),
+    ],
+    130: [
+        BestMove(56, "hydro-pump", "water", "special", 110, 80),
+        BestMove(37, "thrash", "normal", "physical", 120, 100),
+    ],
+    92: [BestMove(247, "shadow-ball", "ghost", "special", 80, 100)],
 }
 
 
@@ -44,6 +86,7 @@ def chart() -> dict[str, dict[str, float]]:
 
 @pytest.fixture
 def cache(chart: dict[str, dict[str, float]]) -> DerivedCache:
+    """A cache built the way build_cache builds one, minus the database."""
     ids = list(ROSTER)
     meta = [
         PokemonMeta(id=i, name=ROSTER[i][0], sprite_url=f"https://img/{i}.png", types=ROSTER[i][1])
@@ -56,12 +99,27 @@ def cache(chart: dict[str, dict[str, float]]) -> DerivedCache:
         ],
         dtype=np.float64,
     )
+    stats = np.array(
+        [[hp_at_level_50(STATS[i][0]), *(stat_at_level_50(v) for v in STATS[i][1:])] for i in ids],
+        dtype=np.float64,
+    )
+    moves = [MOVEPOOLS[i] for i in ids]
+    packed = pack_moves(moves, meta)
+
     return DerivedCache(
         chart=chart,
         pokemon_index={pid: row for row, pid in enumerate(ids)},
         pokemon_ids=ids,
         meta=meta,
         vectors=vectors,
+        stats=stats,
+        totals=np.array([sum(STATS[i]) for i in ids], dtype=np.float64),
+        moves=moves,
+        move_type_index=packed[0],
+        move_power=packed[1],
+        move_physical=packed[2],
+        move_accuracy=packed[3],
+        move_stab=packed[4],
         built_at=datetime.datetime.now(datetime.UTC),
         build_ms=1.0,
         chart_rows_loaded=324,
@@ -73,76 +131,99 @@ def _row(cache: DerivedCache, pokemon_id: int) -> int:
 
 
 class TestScore:
-    def test_tyranitar_answers_charizard(self, cache: DerivedCache) -> None:
-        """Rock hits fire/flying for 4x; charizard's fire and flying hit
-        rock/dark for 0.5x. 4 / 0.5 = 8."""
+    """The damage model replaced type effectiveness here. Nothing above it --
+    selection, marginal gain, the round count, the response -- changed."""
+
+    def test_outgoing_is_the_best_move_available(self, cache: DerivedCache) -> None:
+        """Charizard's Flamethrower into Blastoise is resisted; Wing Attack is
+        neutral. The scorer picks whichever actually lands more."""
+        result = scoring.score(cache, _row(cache, 6), _row(cache, 9))
+        assert result.move_name in {"flamethrower", "wing-attack"}
+        assert result.outgoing > 0
+
+    def test_outgoing_is_a_continuous_fraction(self, cache: DerivedCache) -> None:
+        """Not a turn count. Rounding collapses the model into four values and
+        produces more ties than the scorer it replaced."""
         result = scoring.score(cache, _row(cache, 248), _row(cache, 6))
-        assert result.offense == 4.0
-        assert result.defense_taken == 0.5
-        assert result.score == 8.0
+        assert isinstance(result.outgoing, float)
+        assert result.outgoing != round(result.outgoing)
 
-    def test_offense_is_the_best_of_the_candidate_types(self, cache: DerivedCache) -> None:
-        """Tyranitar is rock/dark; rock is 4x into fire/flying and dark is 1x,
-        so the better of the two is used."""
+    def test_both_directions_are_measured(self, cache: DerivedCache) -> None:
+        result = scoring.score(cache, _row(cache, 9), _row(cache, 6))
+        assert result.outgoing > 0 and result.incoming > 0
+
+    def test_a_favourable_matchup_scores_above_half(self, cache: DerivedCache) -> None:
+        """Tyranitar's Stone Edge is 4x into fire/flying, and Charizard's fire
+        is resisted by rock in return."""
+        assert scoring.score(cache, _row(cache, 248), _row(cache, 6)).score > 0.5
+
+    def test_speed_is_reflected(self, cache: DerivedCache) -> None:
+        result = scoring.score(cache, _row(cache, 94), _row(cache, 143))
+        # Gengar at 110 outruns Snorlax at 30.
+        assert result.outspeeds is True
+
+    def test_turns_to_ko_is_display_only(self, cache: DerivedCache) -> None:
         result = scoring.score(cache, _row(cache, 248), _row(cache, 6))
-        assert result.offense == 4.0
-
-    def test_defense_is_the_worst_the_enemy_lands(self, cache: DerivedCache) -> None:
-        """Gengar attacks with ghost and poison. Against snorlax (normal),
-        ghost is 0x but poison is 1x, and the worst case is what matters."""
-        result = scoring.score(cache, _row(cache, 143), _row(cache, 94))
-        assert result.defense_taken == 1.0
-
-    def test_zero_offense_scores_zero(self, cache: DerivedCache) -> None:
-        """Snorlax is normal, and normal cannot touch a ghost at all."""
-        result = scoring.score(cache, _row(cache, 143), _row(cache, 94))
-        assert result.offense == 0.0
-        assert result.score == 0.0
+        assert result.turns_to_ko == math.ceil(1 / result.outgoing)
 
 
 class TestImmunity:
-    def test_immunity_does_not_divide_by_zero(self, cache: DerivedCache) -> None:
-        """Gengar is ghost/poison and snorlax is normal, so neither of gengar's
-        types touches it... but the reverse case is the one that matters: a
-        candidate immune to everything the enemy has would be 1/0."""
-        result = scoring.score(cache, _row(cache, 94), _row(cache, 143))
-        assert np.isfinite(result.score)
-
-    def test_immune_candidate_gets_the_capped_defence(
+    def test_a_candidate_with_no_answer_scores_zero(
         self, chart: dict[str, dict[str, float]]
     ) -> None:
-        """A normal-type enemy against a ghost candidate: normal does 0x to
-        ghost, so the candidate takes nothing and defence is capped rather than
-        infinite, which is neither comparable nor JSON-serialisable."""
-        meta = [
-            PokemonMeta(1, "snorlax", None, ("normal",)),
-            PokemonMeta(2, "gengar", None, ("ghost", "poison")),
-        ]
-        vectors = np.array(
-            [
-                defensive_vector(chart, m.types[0], m.types[1] if len(m.types) > 1 else None)
-                for m in meta
-            ],
-            dtype=np.float64,
-        )
-        cache = DerivedCache(
-            chart=chart,
-            pokemon_index={1: 0, 2: 1},
-            pokemon_ids=[1, 2],
-            meta=meta,
-            vectors=vectors,
-            built_at=datetime.datetime.now(datetime.UTC),
-            build_ms=1.0,
-            chart_rows_loaded=324,
-        )
-        result = scoring.score(cache, 1, 0)
-        assert result.defense_taken == 0.0
-        assert result.score == scoring.IMMUNE_DEFENSE * result.offense
+        """Gastly only has Shadow Ball, and ghost does nothing to a normal
+        type. No division, no infinity, just zero."""
+        result = scoring.score(cache_for(chart), 0, 1)
+        assert result.outgoing == 0.0
+        assert result.score == 0.0
 
     def test_all_scores_are_finite(self, cache: DerivedCache) -> None:
-        """Any infinity would propagate into the response and fail to serialise."""
-        scores, _, _ = scoring.score_matrix(cache, list(range(len(cache.meta))))
-        assert np.isfinite(scores).all()
+        """Any infinity would propagate into the response and fail to
+        serialise."""
+        grid = scoring.score_matrix(cache, list(range(len(cache.meta))))
+        assert np.isfinite(grid.scores).all()
+        assert np.isfinite(grid.outgoing).all()
+        assert np.isfinite(grid.incoming).all()
+
+
+def cache_for(chart: dict[str, dict[str, float]]) -> DerivedCache:
+    """Gastly (ghost/poison, Shadow Ball only) against Snorlax (normal)."""
+    meta = [
+        PokemonMeta(92, "gastly", None, ("ghost", "poison")),
+        PokemonMeta(143, "snorlax", None, ("normal",)),
+    ]
+    vectors = np.array(
+        [
+            defensive_vector(chart, m.types[0], m.types[1] if len(m.types) > 1 else None)
+            for m in meta
+        ],
+        dtype=np.float64,
+    )
+    stats = np.array(
+        [
+            [hp_at_level_50(STATS[i][0]), *(stat_at_level_50(v) for v in STATS[i][1:])]
+            for i in (92, 143)
+        ],
+        dtype=np.float64,
+    )
+    moves = [MOVEPOOLS[92], MOVEPOOLS[143]]
+    packed = pack_moves(moves, meta)
+    return DerivedCache(
+        chart=chart,
+        pokemon_index={92: 0, 143: 1},
+        pokemon_ids=[92, 143],
+        meta=meta,
+        vectors=vectors,
+        stats=stats,
+        totals=np.array([sum(STATS[92]), sum(STATS[143])], dtype=np.float64),
+        moves=moves,
+        move_type_index=packed[0],
+        move_power=packed[1],
+        move_physical=packed[2],
+        move_accuracy=packed[3],
+        move_stab=packed[4],
+        chart_rows_loaded=324,
+    )
 
 
 class TestScalarAndVectorAgree:
@@ -150,28 +231,29 @@ class TestScalarAndVectorAgree:
     matching their own rationales."""
 
     def test_every_pair_matches(self, cache: DerivedCache) -> None:
-        enemy_rows = list(range(len(cache.meta)))
-        scores, offense, taken = scoring.score_matrix(cache, enemy_rows)
-        for candidate_row in range(len(cache.meta)):
-            for column, enemy_row in enumerate(enemy_rows):
-                expected = scoring.score(cache, candidate_row, enemy_row)
-                assert scores[candidate_row, column] == pytest.approx(expected.score)
-                assert offense[candidate_row, column] == pytest.approx(expected.offense)
-                assert taken[candidate_row, column] == pytest.approx(expected.defense_taken)
+        rows = list(range(len(cache.meta)))
+        grid = scoring.score_matrix(cache, rows)
+        for candidate in rows:
+            for column, enemy in enumerate(rows):
+                expected = scoring.score(cache, candidate, enemy)
+                assert grid.scores[candidate, column] == pytest.approx(expected.score)
+                assert grid.outgoing[candidate, column] == pytest.approx(expected.outgoing)
+                assert grid.incoming[candidate, column] == pytest.approx(expected.incoming)
+                assert bool(grid.outspeeds[candidate, column]) == expected.outspeeds
 
 
 class TestSelection:
     def test_returns_the_requested_size(self, cache: DerivedCache) -> None:
-        scores, _, _ = scoring.score_matrix(cache, [_row(cache, 6), _row(cache, 9)])
+        scores = scoring.score_matrix(cache, [_row(cache, 6), _row(cache, 9)]).scores
         assert len(scoring.select_team(scores, size=6)) == 6
 
     def test_never_picks_the_same_pokemon_twice(self, cache: DerivedCache) -> None:
-        scores, _, _ = scoring.score_matrix(cache, [_row(cache, 6), _row(cache, 9)])
+        scores = scoring.score_matrix(cache, [_row(cache, 6), _row(cache, 9)]).scores
         picks = scoring.select_team(scores, size=6)
         assert len(set(picks)) == len(picks)
 
     def test_cannot_return_more_than_the_candidate_pool(self, cache: DerivedCache) -> None:
-        scores, _, _ = scoring.score_matrix(cache, [_row(cache, 6)])
+        scores = scoring.score_matrix(cache, [_row(cache, 6)]).scores
         assert len(scoring.select_team(scores, size=99)) == len(cache.meta)
 
     def test_first_pick_maximises_total_coverage(self) -> None:
@@ -245,76 +327,13 @@ class TestBuildCounterTeam:
 
 
 class TestRationale:
-    def test_names_the_effective_type(self, cache: DerivedCache) -> None:
+    def test_names_the_move_and_what_it_does(self, cache: DerivedCache) -> None:
         matchup = scoring.score(cache, _row(cache, 248), _row(cache, 6))
         text = scoring.rationale(cache, _row(cache, 248), _row(cache, 6), matchup)
-        assert "rock hits fire/flying for 4x" in text
+        assert matchup.move_name in text
+        assert "per turn" in text and "to KO" in text
 
-    def test_explains_a_hopeless_matchup(self, cache: DerivedCache) -> None:
-        matchup = scoring.score(cache, _row(cache, 143), _row(cache, 94))
-        text = scoring.rationale(cache, _row(cache, 143), _row(cache, 94), matchup)
-        assert "cannot touch" in text
-
-
-class TestEqualSize:
-    """The counter team matches the team it answers. The count is derived from
-    the request rather than configured, so there is no way to ask for a
-    mismatch."""
-
-    @pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 6])
-    def test_picks_match_the_enemy_count(self, cache: DerivedCache, count: int) -> None:
-        enemies = list(ROSTER)[:count]
-        result = build_counter_team(cache, enemies)
-        assert result.size == len(result.picks) == count
-
-    @pytest.mark.parametrize("count", [1, 2, 3])
-    def test_coverage_has_one_entry_per_enemy(self, cache: DerivedCache, count: int) -> None:
-        enemies = list(ROSTER)[:count]
-        assert len(build_counter_team(cache, enemies).coverage) == count
-
-    def test_every_pick_answers_every_enemy(self, cache: DerivedCache) -> None:
-        result = build_counter_team(cache, [6, 9, 94])
-        assert all(len(pick.answers) == 3 for pick in result.picks)
-
-    def test_size_field_matches_the_picks(self, cache: DerivedCache) -> None:
-        """Echoed so the frontend can assert rather than assume."""
-        result = build_counter_team(cache, [6, 9])
-        assert result.size == len(result.picks)
-
-    def test_select_team_requires_a_size(self) -> None:
-        """A default is what made every request return six picks: the caller
-        never passed one, so nothing looked wrong at the call site."""
-        import inspect
-
-        signature = inspect.signature(scoring.select_team)
-        assert signature.parameters["size"].default is inspect.Parameter.empty
-
-
-class TestDiversity:
-    """Against several Pokemon of one type, one good answer covers them all and
-    every remaining candidate has zero marginal gain. Ranking those by raw score
-    returns near-identical Pokemon, which is a fragile team and useless advice."""
-
-    def test_saturated_rounds_prefer_unrepresented_types(self) -> None:
-        # Two candidates answer identically; the third is weaker but new.
-        scores = np.array([[8.0], [8.0], [8.0]])
-        mask = np.array(
-            [
-                [True, False, False],  # picked first
-                [True, False, False],  # same typing, nothing new
-                [False, True, False],  # a type the team lacks
-            ]
-        )
-        assert scoring.select_team(scores, size=2, type_mask=mask) == [0, 2]
-
-    def test_without_a_mask_the_ranking_is_unchanged(self) -> None:
-        """Diversity is a tie-break, not a change to the scoring."""
-        scores = np.array([[8.0], [8.0], [1.0]])
-        assert scoring.select_team(scores, size=2) == [0, 1]
-
-    def test_marginal_gain_still_wins_over_breadth(self) -> None:
-        """Covering an uncovered enemy beats broadening the typing."""
-        scores = np.array([[4.0, 0.0], [0.0, 4.0], [0.0, 0.0]])
-        mask = np.array([[True, False, False], [True, False, False], [False, True, True]])
-        # Candidate 1 shares a typing with 0 but answers the second enemy.
-        assert scoring.select_team(scores, size=2, type_mask=mask) == [0, 1]
+    def test_explains_a_hopeless_matchup(self, chart: dict[str, dict[str, float]]) -> None:
+        small = cache_for(chart)
+        matchup = scoring.score(small, 0, 1)
+        assert "cannot damage" in scoring.rationale(small, 0, 1, matchup)

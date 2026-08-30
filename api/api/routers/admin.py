@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.counterteam import scoring
 from api.db import get_session
 from api.derived import registry
 from api.derived.typechart import TYPE_INDEX, defensive_multiplier, explain, matchup
@@ -24,6 +25,7 @@ from api.schemas import (
     ExplainResponse,
     JobAccepted,
     JobRead,
+    MatchupDetail,
     MatchupResponse,
     NormalizeDebugResponse,
     ResetDemoResponse,
@@ -543,3 +545,39 @@ async def age_change(
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Change not found")
     return result
+
+
+@router.get(
+    "/debug/matchup-detail",
+    response_model=MatchupDetail,
+    summary="Every number behind one pairing",
+    description=(
+        "The full damage breakdown for one attacker against one defender: the "
+        "move chosen from the collapsed movepool, both stats used, the "
+        "multiplier and STAB, the raw damage, the continuous fraction the "
+        "scorer works on, the rounded turn count shown to users, and the speed "
+        "comparison.\n\n"
+        "Try `attacker=248&defender=6` -- Tyranitar's rock move is 4x into "
+        "Charizard's fire/flying."
+    ),
+    responses={
+        404: error_response("No Pokemon with that id.", "Pokemon not found"),
+        503: error_response(
+            "The derived cache is not built, or the type chart is incomplete.",
+            registry.CACHE_UNAVAILABLE_DETAIL,
+        ),
+    },
+)
+async def debug_matchup_detail(
+    attacker: Annotated[int, Query(ge=1, description="Attacking Pokemon id.")],
+    defender: Annotated[int, Query(ge=1, description="Defending Pokemon id.")],
+) -> MatchupDetail:
+    cache = require_cache()
+    for pokemon_id in (attacker, defender):
+        if pokemon_id not in cache.pokemon_index:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pokemon not found")
+    return MatchupDetail(
+        **scoring.explain_matchup(
+            cache, cache.pokemon_index[attacker], cache.pokemon_index[defender]
+        )
+    )

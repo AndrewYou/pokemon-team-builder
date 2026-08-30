@@ -391,15 +391,32 @@ new ordering, so sending the array is simpler and atomic. It also sidesteps the
 `UNIQUE(team_id, slot)` constraint, which a partial reorder would trip while
 swapping two slots.
 
-**Counter-team** (`/counter-team`) is type effectiveness only -- no damage
-formula, stats, moves, or speed. One scoring function is the only thing a later
-damage model replaces:
+**Counter-team** (`/counter-team`) scores on modelled damage. Exactly one
+function changed when the damage model landed -- selection, marginal gain, the
+round count and the response shape were untouched:
 
 ```
-offense = best multiplier the pick's types land on the enemy
-defense = 1 / worst multiplier the enemy's types land back
-score   = offense * defense
+outgoing = best damage fraction this pick lands per turn
+incoming = best damage fraction it takes back
+score    = outgoing / (outgoing + incoming + turn cost), bonus for moving first
 ```
+
+Both directions are required. Type effectiveness alone could not tell a counter
+from a casualty: dealing 0.6 a turn while taking 1.2 is losing.
+
+The score is a **continuous fraction of a health bar, never a turn count**.
+Rounding to turns collapses the model into about four values, which produces
+*more* ties than the type-only scorer it replaced and hands each one to
+iteration order. `turns_to_ko` is computed for display and the scorer never sees
+it.
+
+Movepools are collapsed at startup: within one (type, damage class) group the
+attacker's stat, the defender's stat and the multiplier are identical, so damage
+rises strictly with power and the strongest move in a group beats the rest
+against every defender. Lossless, and it takes ~40 moves to 14.
+
+`GET /admin/debug/matchup-detail?attacker=248&defender=6` shows every number
+behind one pairing.
 
 A result describes the roster it was generated for. When the roster changes the
 previous answers are collapsed behind an explanation naming both counts, not

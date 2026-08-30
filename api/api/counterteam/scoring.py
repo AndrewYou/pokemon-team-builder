@@ -9,11 +9,20 @@ persistence: a request is a pure function of the enemy ids and the cache.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
+from api.battle.damage import (
+    FIRST_STRIKE_BONUS,
+    LEVEL_TERM,
+    TURN_COST,
+    damage_fraction,
+    matchup_score,
+)
 from api.derived.cache import DerivedCache, PokemonMeta
 
 # The game's roster limit, used only to reject an oversized request. The
@@ -29,53 +38,27 @@ IMMUNE_DEFENSE = 8.0
 
 @dataclass(frozen=True, slots=True)
 class Matchup:
-    """One candidate measured against one enemy."""
+    """One candidate measured against one enemy, with the reasoning kept."""
 
     score: float
-    offense: float
-    defense_taken: float
+    outgoing: float
+    incoming: float
+    move_name: str
+    move_type: str
+    damage_class: str
+    outspeeds: bool
 
     @property
-    def rationale_suffix(self) -> str:
-        return f"takes {self.defense_taken:g}x back"
-
-
-def score(
-    cache: DerivedCache,
-    candidate_row: int,
-    enemy_row: int,
-) -> Matchup:
-    """Score one candidate against one enemy.
-
-    THE function phase 9 replaces. Everything above it -- selection, coverage,
-    the response shape -- is written against this signature so the damage model
-    can drop in without touching them.
-
-        offense = best multiplier the candidate's own types land on the enemy
-        defense = 1 / worst multiplier the enemy's types land on the candidate
-        score   = offense * defense
-
-    Reading the candidate's types as *attacking* types is the type-only stand-in
-    for "has a move that hits hard": with no movepool in scope, a Pokemon's own
-    types are the best available proxy for what it can threaten.
-    """
-    enemy_vector = cache.vectors[enemy_row]
-    candidate_vector = cache.vectors[candidate_row]
-
-    candidate_types = cache.meta[candidate_row].types
-    enemy_types = cache.meta[enemy_row].types
-
-    offense = max(enemy_vector[cache.type_index[t]] for t in candidate_types)
-    taken = max(candidate_vector[cache.type_index[t]] for t in enemy_types)
-
-    defense = IMMUNE_DEFENSE if taken == 0.0 else 1.0 / taken
-    return Matchup(
-        score=float(offense * defense), offense=float(offense), defense_taken=float(taken)
-    )
+    def turns_to_ko(self) -> int:
+        """Display only. The scorer works on the continuous fraction."""
+        return math.ceil(1 / self.outgoing) if self.outgoing > 0 else 0
 
 
 def candidate_type_mask(cache: DerivedCache) -> npt.NDArray[np.bool_]:
-    """[candidate, type] -> does this candidate have that type."""
+    """[candidate, type] -> does this candidate have that type.
+
+    Used by selection to prefer typings the team does not already cover.
+    """
     mask = np.zeros((len(cache.meta), cache.vectors.shape[1]), dtype=bool)
     for row, meta in enumerate(cache.meta):
         for type_name in meta.types:
@@ -83,38 +66,140 @@ def candidate_type_mask(cache: DerivedCache) -> npt.NDArray[np.bool_]:
     return mask
 
 
-def score_matrix(
-    cache: DerivedCache, enemy_rows: list[int]
-) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+def _valid(cache: DerivedCache) -> npt.NDArray[np.bool_]:
+    """Padding columns carry power 0. The +2 in the damage formula means they
+    would otherwise contribute real damage rather than none."""
+    return cache.move_power > 0
+
+
+def outgoing_against(
+    cache: DerivedCache, defender_row: int
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.intp]]:
+    """Every candidate's best damage fraction against one defender.
+
+    Broadcast over the padded movepool arrays: 1025 x 36 in one pass rather
+    than a Python loop per candidate per move.
+    """
+    defender_vector = cache.vectors[defender_row]
+    multiplier = defender_vector[cache.move_type_index]
+
+    attack = np.where(cache.move_physical, cache.stats[:, 1:2], cache.stats[:, 3:4])
+    defense = np.where(
+        cache.move_physical, cache.stats[defender_row, 2], cache.stats[defender_row, 4]
+    )
+
+    base = (LEVEL_TERM * cache.move_power * attack / defense) / 50 + 2
+    damage = base * cache.move_stab * multiplier * cache.move_accuracy
+    damage = np.where(_valid(cache), damage, 0.0)
+
+    fractions = damage / cache.stats[defender_row, 0]
+    return fractions.max(axis=1), fractions.argmax(axis=1)
+
+
+def incoming_from(cache: DerivedCache, attacker_row: int) -> npt.NDArray[np.float64]:
+    """One attacker's best damage fraction against every candidate."""
+    types = cache.move_type_index[attacker_row]
+    powers = cache.move_power[attacker_row]
+    physical = cache.move_physical[attacker_row]
+
+    multiplier = cache.vectors[:, types]
+    attack = np.where(physical, cache.stats[attacker_row, 1], cache.stats[attacker_row, 3])
+    defense = np.where(physical[np.newaxis, :], cache.stats[:, 2:3], cache.stats[:, 4:5])
+
+    base = (LEVEL_TERM * powers[np.newaxis, :] * attack[np.newaxis, :] / defense) / 50 + 2
+    damage = base * cache.move_stab[attacker_row] * multiplier * cache.move_accuracy[attacker_row]
+    damage = np.where(powers[np.newaxis, :] > 0, damage, 0.0)
+
+    fractions = damage / cache.stats[:, 0:1]
+    return fractions.max(axis=1)
+
+
+def score(cache: DerivedCache, candidate_row: int, enemy_row: int) -> Matchup:
+    """Score one candidate against one enemy.
+
+    THE function this phase replaced. Selection, marginal gain, the round count
+    and the response shape are all untouched above it.
+
+        outgoing = best damage fraction this candidate lands per turn
+        incoming = best damage fraction it takes per turn
+        score    = outgoing / (outgoing + incoming), with a bonus for striking
+                   first
+
+    Both directions matter. Type effectiveness alone could not tell a counter
+    from a casualty: dealing 0.6 a turn while taking 1.2 is losing.
+    """
+    outgoing_all, move_index = outgoing_against(cache, enemy_row)
+    outgoing = float(outgoing_all[candidate_row])
+    incoming = float(incoming_from(cache, enemy_row)[candidate_row])
+    outspeeds = bool(cache.stats[candidate_row, 5] > cache.stats[enemy_row, 5])
+
+    moves = cache.moves[candidate_row]
+    chosen = moves[int(move_index[candidate_row])] if moves and outgoing > 0 else None
+
+    return Matchup(
+        score=matchup_score(outgoing, incoming, outspeeds),
+        outgoing=outgoing,
+        incoming=incoming,
+        move_name=chosen.name if chosen else "",
+        move_type=chosen.type if chosen else "",
+        damage_class=chosen.damage_class if chosen else "",
+        outspeeds=outspeeds,
+    )
+
+
+@dataclass(slots=True)
+class ScoreGrid:
+    """Every candidate against every enemy, plus the detail the response needs."""
+
+    scores: npt.NDArray[np.float64]
+    outgoing: npt.NDArray[np.float64]
+    incoming: npt.NDArray[np.float64]
+    move_index: npt.NDArray[np.intp]
+    outspeeds: npt.NDArray[np.bool_]
+
+
+def score_matrix(cache: DerivedCache, enemy_rows: list[int]) -> ScoreGrid:
     """Score every candidate against every enemy at once.
 
-    Vectorised because selection needs the full matrix anyway: 1025 candidates
-    by 6 enemies is one array operation rather than 6150 Python calls. Returns
-    the scores plus the offence and taken components, which the rationales need.
+    Selection needs the whole grid anyway, and 1025 candidates by six enemies
+    is a handful of array operations rather than 6150 Python calls.
     """
-    # The offensive lookup is a masked max over the enemy's defensive vector.
-    mask = candidate_type_mask(cache)
-
-    offense = np.zeros((len(cache.meta), len(enemy_rows)), dtype=np.float64)
-    taken = np.zeros_like(offense)
+    count = len(cache.meta)
+    shape = (count, len(enemy_rows))
+    outgoing = np.zeros(shape, dtype=np.float64)
+    incoming = np.zeros(shape, dtype=np.float64)
+    move_index = np.zeros(shape, dtype=np.intp)
+    outspeeds = np.zeros(shape, dtype=bool)
 
     for column, enemy_row in enumerate(enemy_rows):
-        enemy_vector = cache.vectors[enemy_row]
-        # Absent types contribute 0, which never wins a max over non-negative
-        # multipliers unless every present type is also 0 -- which is the
-        # correct answer in that case.
-        offense[:, column] = np.max(np.where(mask, enemy_vector[np.newaxis, :], 0.0), axis=1)
-        enemy_type_columns = [cache.type_index[t] for t in cache.meta[enemy_row].types]
-        taken[:, column] = np.max(cache.vectors[:, enemy_type_columns], axis=1)
+        best, chosen = outgoing_against(cache, enemy_row)
+        outgoing[:, column] = best
+        move_index[:, column] = chosen
+        incoming[:, column] = incoming_from(cache, enemy_row)
+        outspeeds[:, column] = cache.stats[:, 5] > cache.stats[enemy_row, 5]
 
-    defense = np.where(taken == 0.0, IMMUNE_DEFENSE, 1.0 / np.where(taken == 0.0, 1.0, taken))
-    return offense * defense, offense, taken
+    # The vectorised form of matchup_score. It is duplicated rather than
+    # called per element, so the constants are imported from the same place
+    # and a test asserts the two paths agree on every pair.
+    effective = np.where(outspeeds, outgoing * (1 + FIRST_STRIKE_BONUS), outgoing)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        scores = np.where(outgoing > 0, effective / (effective + incoming + TURN_COST), 0.0)
+
+    return ScoreGrid(
+        scores=scores,
+        outgoing=outgoing,
+        incoming=incoming,
+        move_index=move_index,
+        outspeeds=outspeeds,
+    )
 
 
 def select_team(
     scores: npt.NDArray[np.float64],
     size: int,
     type_mask: npt.NDArray[np.bool_] | None = None,
+    stat_totals: npt.NDArray[np.float64] | None = None,
+    ids: npt.NDArray[np.int64] | None = None,
 ) -> list[int]:
     """Pick `size` counters by marginal gain over what is already covered.
 
@@ -138,7 +223,9 @@ def select_team(
     """
     candidate_count, enemy_count = scores.shape
     best = np.zeros(enemy_count, dtype=np.float64)
-    totals = scores.sum(axis=1)
+    # Base stat totals decide ties, falling back to overall answer quality when
+    # the caller has not supplied them.
+    totals = stat_totals if stat_totals is not None else scores.sum(axis=1)
     chosen: list[int] = []
 
     for _ in range(min(size, candidate_count)):
@@ -161,7 +248,7 @@ def select_team(
             if pool.size == 0:
                 break
 
-        pick = _rank(pool, chosen, totals, type_mask)
+        pick = _rank(pool, chosen, totals, type_mask, ids)
         chosen.append(pick)
         best = np.maximum(best, scores[pick])
 
@@ -173,37 +260,102 @@ def _rank(
     chosen: list[int],
     totals: npt.NDArray[np.float64],
     type_mask: npt.NDArray[np.bool_] | None,
+    ids: npt.NDArray[np.int64] | None = None,
 ) -> int:
-    """Choose from `pool`, preferring typings the team does not already have."""
-    if type_mask is None or not chosen:
-        return int(pool[np.argmax(totals[pool])])
+    """Choose from `pool`, breaking ties deterministically.
 
-    covered = type_mask[chosen].any(axis=0)
-    novelty = (type_mask[pool] & ~covered).sum(axis=1)
-    # Lexicographic: most new types, then highest score among those.
-    best_novelty = novelty.max()
-    tied = pool[novelty == best_novelty]
-    return int(tied[np.argmax(totals[tied])])
+    Order: typings the team does not already have, then base stat total
+    descending, then id ascending. The last one is not cosmetic -- without it
+    iteration order decides ties, and a test that depends on which of two
+    equally-scored Pokemon is picked fails intermittently.
+    """
+    candidates = pool
+    if type_mask is not None and chosen:
+        covered = type_mask[chosen].any(axis=0)
+        novelty = (type_mask[candidates] & ~covered).sum(axis=1)
+        candidates = candidates[novelty == novelty.max()]
+
+    best_total = totals[candidates].max()
+    candidates = candidates[totals[candidates] == best_total]
+
+    if ids is None:
+        return int(candidates[0])
+    return int(candidates[np.argmin(ids[candidates])])
 
 
 def rationale(cache: DerivedCache, candidate_row: int, enemy_row: int, matchup: Matchup) -> str:
     """Explain a matchup in the terms a player would use."""
     candidate = cache.meta[candidate_row]
     enemy = cache.meta[enemy_row]
-
-    enemy_vector = cache.vectors[enemy_row]
-    best_type = max(candidate.types, key=lambda t: enemy_vector[cache.type_index[t]])
     enemy_typing = "/".join(enemy.types)
 
-    if matchup.offense == 0.0:
-        lead = f"{candidate.name} cannot touch {enemy_typing} with its own types"
-    else:
-        lead = f"{best_type} hits {enemy_typing} for {matchup.offense:g}x"
+    if matchup.outgoing <= 0:
+        return f"{candidate.name} cannot damage {enemy_typing}"
 
-    if matchup.defense_taken == 0.0:
-        return f"{lead}; immune to {enemy_typing}"
-    return f"{lead}; {matchup.rationale_suffix}"
+    lead = (
+        f"{matchup.move_name} ({matchup.move_type}) takes {matchup.outgoing:.0%} "
+        f"per turn, {matchup.turns_to_ko} to KO"
+    )
+    if matchup.incoming <= 0:
+        return f"{lead}; takes nothing back"
+    back = f"takes {matchup.incoming:.0%} back"
+    return f"{lead}; {back}{'; moves first' if matchup.outspeeds else ''}"
 
 
 def meta_of(cache: DerivedCache, row: int) -> PokemonMeta:
     return cache.meta[row]
+
+
+def explain_matchup(cache: DerivedCache, attacker_row: int, defender_row: int) -> dict[str, Any]:
+    """Every number behind one pairing, for the debug endpoint.
+
+    Recomputed through the scalar path rather than read out of the grid, so a
+    disagreement between the two shows up here rather than staying hidden.
+    """
+    fractions, indices = outgoing_against(cache, defender_row)
+    fraction = float(fractions[attacker_row])
+    moves = cache.moves[attacker_row]
+    move = moves[int(indices[attacker_row])] if moves and fraction > 0 else None
+
+    attacker = cache.meta[attacker_row]
+    defender = cache.meta[defender_row]
+    physical = move.damage_class == "physical" if move else True
+
+    detail = damage_fraction(
+        power=move.power if move else 0,
+        damage_class=move.damage_class if move else "physical",
+        move_type=move.type if move else "normal",
+        attacker_types=attacker.types,
+        attacker_attack=int(cache.stats[attacker_row, 1]),
+        attacker_special_attack=int(cache.stats[attacker_row, 3]),
+        defender_defense=int(cache.stats[defender_row, 2]),
+        defender_special_defense=int(cache.stats[defender_row, 4]),
+        defender_hp=int(cache.stats[defender_row, 0]),
+        type_multiplier=(cache.vectors[defender_row][cache.type_index[move.type]] if move else 0.0),
+        accuracy=move.accuracy if move else None,
+    )
+
+    return {
+        "attacker_id": attacker.id,
+        "attacker_name": attacker.name,
+        "attacker_types": list(attacker.types),
+        "defender_id": defender.id,
+        "defender_name": defender.name,
+        "defender_types": list(defender.types),
+        "move_name": move.name if move else "",
+        "move_type": move.type if move else "",
+        "damage_class": move.damage_class if move else "",
+        "move_power": move.power if move else 0,
+        "move_accuracy": move.accuracy if move else None,
+        "attack_stat": int(cache.stats[attacker_row, 1 if physical else 3]),
+        "defense_stat": int(cache.stats[defender_row, 2 if physical else 4]),
+        "defender_hp": int(cache.stats[defender_row, 0]),
+        "stab": detail.stab if detail else 0.0,
+        "type_multiplier": detail.multiplier if detail else 0.0,
+        "raw_damage": round(detail.damage, 4) if detail else 0.0,
+        "damage_fraction": round(fraction, 6),
+        "turns_to_ko": detail.turns_to_ko if detail else 0,
+        "attacker_speed": int(cache.stats[attacker_row, 5]),
+        "defender_speed": int(cache.stats[defender_row, 5]),
+        "outspeeds": bool(cache.stats[attacker_row, 5] > cache.stats[defender_row, 5]),
+    }
