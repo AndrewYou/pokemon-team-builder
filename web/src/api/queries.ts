@@ -216,7 +216,38 @@ export function useAlerts() {
       if (error) throw new Error('Could not load alerts')
       return data
     },
+    // A sync is a background job that can finish at any time, so the feed is
+    // polled rather than waited on. A minute is often enough to feel live and
+    // rare enough to be free; websockets would be a lot of machinery for this.
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   })
+}
+
+type AlertsData = NonNullable<Awaited<ReturnType<typeof fetchAlerts>>>
+
+async function fetchAlerts() {
+  const { data, error } = await api.GET('/alerts')
+  if (error) throw new Error('Could not load alerts')
+  return data
+}
+
+/** Remove one change from the cached feed, leaving every other item in place. */
+function removeChange(data: AlertsData | undefined, changeId: number): AlertsData | undefined {
+  if (!data) return data
+  const groups = data.groups
+    .map((group) => ({
+      ...group,
+      changes: group.changes.filter((change) => change.change_id !== changeId),
+    }))
+    // A group with nothing left disappears rather than lingering empty.
+    .filter((group) => group.changes.length > 0)
+  return {
+    ...data,
+    groups,
+    total_changes: groups.reduce((sum, group) => sum + group.changes.length, 0),
+    affected_pokemon: groups.length,
+  }
 }
 
 export function useDismissAlert() {
@@ -228,7 +259,41 @@ export function useDismissAlert() {
       })
       if (error) throw new Error('Could not dismiss the alert')
     },
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.alerts }),
+    // Optimistic so the badge drops the moment the X is pressed. Filtering
+    // rather than refetching also means the surviving items keep their exact
+    // positions instead of the list rebuilding under the cursor.
+    onMutate: async (changeId) => {
+      await client.cancelQueries({ queryKey: keys.alerts })
+      const previous = client.getQueryData<AlertsData>(keys.alerts)
+      client.setQueryData<AlertsData>(keys.alerts, (data) => removeChange(data, changeId))
+      return { previous }
+    },
+    onError: (_error, _changeId, context) => {
+      if (context?.previous) client.setQueryData(keys.alerts, context.previous)
+    },
+    onSettled: () => client.invalidateQueries({ queryKey: keys.alerts }),
+  })
+}
+
+export function useDismissAllAlerts() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST('/alerts/dismiss-all')
+      if (error) throw new Error('Could not dismiss the alerts')
+    },
+    onMutate: async () => {
+      await client.cancelQueries({ queryKey: keys.alerts })
+      const previous = client.getQueryData<AlertsData>(keys.alerts)
+      client.setQueryData<AlertsData>(keys.alerts, (data) =>
+        data ? { ...data, groups: [], total_changes: 0, affected_pokemon: 0 } : data,
+      )
+      return { previous }
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) client.setQueryData(keys.alerts, context.previous)
+    },
+    onSettled: () => client.invalidateQueries({ queryKey: keys.alerts }),
   })
 }
 

@@ -1,6 +1,5 @@
 import type { TeamMember, TeamRead } from '@/api/client'
 
-import { AlertBanner } from './AlertBanner'
 import { CounterTeam } from './CounterTeam'
 import { TeamHeader } from './TeamHeader'
 import { MAX_SLOTS, TeamSlots } from './TeamSlots'
@@ -38,8 +37,6 @@ export function TeamPanel({
       <TeamSlots members={members} activeType={activeType} onRemove={onRemove} />
 
       <CounterTeam members={members} />
-
-      <AlertBanner />
     </div>
   )
 }

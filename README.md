@@ -287,6 +287,22 @@ times would be the obvious bug. One group names all three teams.
 Descriptions are sentences rather than diffs -- "Pikachu's Attack changed from
 55 to 60" -- rendered by the same function the simulator uses to predict them.
 
+Alerts live behind a bell in the header rather than inline in the team panel,
+where they sat below the primary workflow and scrolled out of view -- the wrong
+place for something that arrives on its own schedule. The badge counts
+individual changes rather than affected Pokemon, caps at 9+, and is hidden
+rather than showing a zero. It uses the single accent colour: a notification is
+a system signal, not Pokemon data.
+
+Ordering is enforced in the query, `detected_at DESC, id DESC`. The id
+tiebreaker is not optional: one sync writes many changes within the same
+fraction of a second, and without it the list visibly reshuffles on every
+refetch. Grouping preserves it -- a group sits where its most recent change puts
+it, never sorted by name.
+
+Opening the dropdown does not mark anything read. Browsing is not
+acknowledgement, and confirming specific changes is the entire point.
+
 `POST /alerts/{id}/dismiss` is idempotent. Re-dismissing answers 200 with the
 original timestamp rather than failing on the composite key: a client retrying a
 request it already made has not done anything wrong. Dismissals are per user, so

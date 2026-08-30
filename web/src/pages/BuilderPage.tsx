@@ -30,6 +30,7 @@ import { TeamBar, TeamRail } from '@/components/builder/TeamDock'
 import { TeamPanel } from '@/components/builder/TeamPanel'
 import { TeamSheet } from '@/components/builder/TeamSheet'
 import { MAX_SLOTS } from '@/components/builder/TeamSlots'
+import { NotificationBell } from '@/components/builder/NotificationBell'
 import { ThemeToggle } from '@/components/builder/ThemeToggle'
 import { useSelectedTeam } from '@/lib/selected-team'
 
@@ -174,7 +175,8 @@ export default function BuilderPage() {
           <span className="text-muted-foreground hidden text-xs sm:inline">
             Click + to add, drag slots to reorder
           </span>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <NotificationBell />
             <ThemeToggle />
           </div>
         </header>

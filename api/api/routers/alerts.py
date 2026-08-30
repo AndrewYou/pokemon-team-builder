@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from api.dependencies import CurrentUser, SessionDep
-from api.schemas import AlertsResponse, DismissResponse, error_response
+from api.schemas import AlertsResponse, DismissAllResponse, DismissResponse, error_response
 from api.services import alerts as alert_service
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
@@ -40,6 +40,21 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 )
 async def list_alerts(session: SessionDep, user: CurrentUser) -> AlertsResponse:
     return await alert_service.list_alerts(session, user.id)
+
+
+@router.post(
+    "/dismiss-all",
+    response_model=DismissAllResponse,
+    summary="Dismiss every alert in your feed",
+    description=(
+        "Acknowledges every change currently visible to you, in one request "
+        "rather than one per change -- a sync can write dozens at once.\n\n"
+        "Idempotent: running it again acknowledges nothing further and still "
+        "answers 200."
+    ),
+)
+async def dismiss_all(session: SessionDep, user: CurrentUser) -> DismissAllResponse:
+    return await alert_service.dismiss_all(session, user.id)
 
 
 @router.post(

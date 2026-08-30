@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import Integer, desc, select
+from sqlalchemy import Integer, Select, desc, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,7 @@ from api.schemas import (
     AlertChange,
     AlertGroup,
     AlertsResponse,
+    DismissAllResponse,
     DismissResponse,
 )
 from api.sync.alerts import alert_text
@@ -105,6 +106,54 @@ def group_alert_rows(rows: Sequence[Any], move_names: dict[int, str]) -> list[Al
             )
 
     return list(groups.values())
+
+
+def _visible_change_ids(user_id: uuid.UUID, cutoff: datetime.datetime) -> Select[tuple[int]]:
+    """Ids of the changes this user can currently see.
+
+    Shared by the feed and by dismiss-all so the two cannot disagree about what
+    "every visible change" means.
+    """
+    acknowledged = (
+        select(ChangeAck.data_change_id).where(ChangeAck.user_id == user_id).scalar_subquery()
+    )
+    return (
+        select(DataChange.id)
+        .join(Pokemon, Pokemon.id == DataChange.entity_id.cast(Integer))
+        .join(TeamMember, TeamMember.pokemon_id == Pokemon.id)
+        .join(Team, (Team.id == TeamMember.team_id) & (Team.user_id == user_id))
+        .where(
+            DataChange.entity_type == ENTITY_POKEMON,
+            DataChange.detected_at >= cutoff,
+            DataChange.id.notin_(acknowledged),
+        )
+    )
+
+
+async def dismiss_all(session: AsyncSession, user_id: uuid.UUID) -> DismissAllResponse:
+    """Acknowledge every change currently in this user's feed.
+
+    One statement rather than a request per change: a sync can write dozens at
+    once, and a browser firing dozens of POSTs to clear them is both slow and a
+    good way to hit a connection limit.
+
+    Idempotent, like the single dismissal -- ON CONFLICT DO NOTHING means
+    re-running it acknowledges nothing further and still succeeds.
+    """
+    cutoff = _utcnow() - datetime.timedelta(days=WINDOW_DAYS)
+    visible = list((await session.scalars(_visible_change_ids(user_id, cutoff))).all())
+    if not visible:
+        return DismissAllResponse(dismissed=0)
+
+    result = await session.execute(
+        insert(ChangeAck)
+        .values([{"user_id": user_id, "data_change_id": change_id} for change_id in visible])
+        .on_conflict_do_nothing(index_elements=["user_id", "data_change_id"])
+        .returning(ChangeAck.data_change_id)
+    )
+    dismissed = len(result.all())
+    await session.commit()
+    return DismissAllResponse(dismissed=dismissed)
 
 
 async def list_alerts(session: AsyncSession, user_id: uuid.UUID) -> AlertsResponse:

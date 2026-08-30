@@ -208,6 +208,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/alerts/dismiss-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss every alert in your feed
+         * @description Acknowledges every change currently visible to you, in one request rather than one per change -- a sync can write dozens at once.
+         *
+         *     Idempotent: running it again acknowledges nothing further and still answers 200.
+         */
+        post: operations["dismiss_all_alerts_dismiss_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/alerts/{change_id}/dismiss": {
         parameters: {
             query?: never;
@@ -1225,6 +1247,20 @@ export interface components {
             stored_hash: string;
             /** Recomputed Hash */
             recomputed_hash: string;
+        };
+        /**
+         * DismissAllResponse
+         * @description Result of clearing the whole feed.
+         * @example {
+         *       "dismissed": 7
+         *     }
+         */
+        DismissAllResponse: {
+            /**
+             * Dismissed
+             * @description Changes newly acknowledged. Zero when there was nothing left.
+             */
+            dismissed: number;
         };
         /**
          * DismissResponse
@@ -2790,6 +2826,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AlertsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dismiss_all_alerts_dismiss_all_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Opaque client identifier. Omit it and the API mints a NEW one per request, returning it in the X-User-Id response header. A freshly minted identity owns nothing, so read endpoints will look empty. Send the same UUID you created your data with. */
+                "X-User-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DismissAllResponse"];
                 };
             };
             /** @description Validation Error */

@@ -21,6 +21,7 @@
     "@tanstack/react-query": "^5.102.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
     "lucide-react": "^1.37.0",
     "openapi-fetch": "^0.17.0",
     "react": "^19.2.8",

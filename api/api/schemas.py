@@ -1249,6 +1249,16 @@ class DismissResponse(BaseModel):
     )
 
 
+class DismissAllResponse(BaseModel):
+    """Result of clearing the whole feed."""
+
+    dismissed: int = Field(
+        description="Changes newly acknowledged. Zero when there was nothing left."
+    )
+
+    model_config = ConfigDict(json_schema_extra={"example": {"dismissed": 7}})
+
+
 class AgedChangeResponse(BaseModel):
     """Result of backdating a change, so the alert window is demonstrable."""
 
