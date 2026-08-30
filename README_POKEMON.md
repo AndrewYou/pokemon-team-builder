@@ -8,20 +8,21 @@ FastAPI on Railway, React + Vite on Vercel, Postgres on Neon. Full detail in
 
 ## 1. Authentication
 
-An anonymous UUID, client-generated, kept in `localStorage` and sent as
-`X-User-Id` — persistence across sessions without an auth system. 
+An anonymous UUID, client-generated, kept in `localStorage` and sent as `X-User-Id`
+— persistence across sessions without an auth system.
 
 ## 2. Database design and management
 
 Postgres on **Neon**.
 
-- **JSON snapshot, not a proxy** — one committed fixture of PokéAPI's 1,025 Pokémon,
-  937 moves and 21 types. It seeds and tests; Postgres is runtime state. You cannot
-  diff against an API you have no prior copy.
-- **Store base stats**, converting to level 50 at read time; otherwise every sync
-  reports the whole dataset as changed.
-- **Normalise before hashing** — PokéAPI's array order isn't stable; without it the
-  first run reports ~1,300 false changes.
+- **JSON snapshot** — one committed fixture of PokéAPI's 1,025 Pokémon, 937 moves
+  and 21 types. Seeds Postgres without calling PokéAPI. Postgres then serves every
+  request and holds the prior copy each sync diffs against.
+- **Store raw base stats exactly as PokéAPI returns them** — Storing converted
+  values would make every sync compare converted against raw and report the whole
+  dataset as changed.
+- **Sorting before hashing** — PokéAPI's array order isn't stable; without it the
+  first run reports 1,025 false changes.
 - **Hash by section** (`stats`, `types`, `moves`, `sprite`), so alerts say *Attack
   55 → 60*, not *Pikachu changed*.
 - **Allowlist the 18 battle types** (324-row chart assertion). Of PokéAPI's 21,
@@ -32,39 +33,43 @@ Postgres on **Neon**.
 ## 3. Pokémon assumptions
 
 Level 50, no EVs or IVs, neutral nature, average damage roll. No items, abilities,
-weather, status, stat stages or switching. No tier restrictions, so legendaries
-dominate.
+weather, status, stat stages or switching.
 
-Not omissions: everything included is fixed before the battle starts, so a matchup
-is a pure function computable at startup; everything excluded needs mid-battle
-state and a simulator to track it.
+No tier restrictions, so legendaries dominate.
+
+What's included is fixed before the battle starts, so a matchup is a pure function;
+what's excluded needs to track previous turns, which we did not do.
 
 ## 4. The counter-team algorithm
 
-Given N opponents, return N counters — ~4 ms against 1,025 candidates. One hit at
-level 50:
+Given N opponents, return N counters — all 1,025 candidates scored against each
+opponent in ~4 ms. One hit at level 50 is measured as follows:
 
 ```
-base     = (22 × power × attack / defense) / 50 + 2      # 22 is the level-50 term
+base     = (22 × power × attack / defense) / 50 + 2   # 22 is the level-50 term
 damage   = base × STAB (1.5 on a matching type) × multiplier × accuracy
-fraction = damage / defender HP
+fraction = damage / defender HP                       # 1.0 = a one-turn KO
 ```
 
-1. **Score all 1,025 candidates against every enemy, both directions.** Dealing
-   0.6 per turn while taking 1.2 is a casualty, not a counter.
-2. **Speed changes the arithmetic** — outspeed and KO in N turns and they act N−1
-   times, so a first-strike one-shot takes zero damage.
-3. **Cap overkill at ~1.2** — 355% and 120% are both one-turn KOs; uncapped, it
-   flattens the ranking.
-4. **Don't round to turns inside the scorer** — `ceil()` collapses damage to four
-   values and creates ties.
-5. **Keep a scorecard, one row per enemy**, starting at zero.
-6. **Rank each round by improvement to it**, not strength: 0.85 against an enemy
-   already answered at 0.80 is worth 0.05; 0.60 against an unanswered one is worth
-   0.60.
+1. **Score every candidate against every enemy, both directions.** The score
+   combines outgoing fraction, incoming fraction and speed into one 0–1 value.
+   Dealing 0.6 per turn while taking 1.2 is a casualty, not a counter.
+2. **Speed decides who acts first** — if the counter outspeeds and KOs in N turns,
+   the opponent acts only N−1 times, so a first-strike one-shot takes nothing back.
+3. **Cap the outgoing fraction at ~1.2** — anything past a one-turn KO is wasted, so
+   355% and 120% score the same.
+4. **Never round inside the scorer.** `ceil(1 / fraction)` gives whole turns to KO,
+   which collapses 1,025 candidates into a handful of buckets and ties constantly.
+   Rounding is a display concern.
+5. **Keep a scorecard, one row per opponent** — the best score the team so far
+   achieves against it. Starts at zero: nothing answers it yet.
+6. **Rank each round by improvement to that scorecard**, not raw strength: 0.85
+   against an opponent already answered at 0.80 is worth 0.05; 0.60 against an
+   unanswered one is worth the full 0.60.
 7. **That update is the diversity mechanism** — a pick whose job is done scores
    zero, so you avoid six exploits of one weakness.
 8. **Break ties deterministically:** typings the team lacks, then stat total, then
    id.
-9. **Report turn margin, not the score** — how many attacks the enemy runs short
-   by: Dominates / Wins / Trades / Loses.
+9. **Report turn margin, not the score.** 0.84 vs 0.79 means nothing to a reader, so
+   the UI shows how many turns the opponent falls short by — `ceil(1/fraction)` each
+   way, adjusted for speed — as Dominates / Wins / Trades / Loses.
