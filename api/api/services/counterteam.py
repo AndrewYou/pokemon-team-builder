@@ -33,7 +33,10 @@ def build_counter_team(cache: DerivedCache, enemy_ids: list[int]) -> CounterTeam
     enemy_rows = [cache.pokemon_index[pid] for pid in enemies]
 
     scores, offense, taken = scoring.score_matrix(cache, enemy_rows)
-    chosen_rows = scoring.select_team(scores)
+    # Equal size is the requirement, so it is derived rather than configured.
+    chosen_rows = scoring.select_team(
+        scores, size=len(enemy_rows), type_mask=scoring.candidate_type_mask(cache)
+    )
 
     picks: list[CounterPick] = []
     for row in chosen_rows:
@@ -82,4 +85,5 @@ def build_counter_team(cache: DerivedCache, enemy_ids: list[int]) -> CounterTeam
             )
         )
 
-    return CounterTeamResponse(picks=picks, coverage=coverage)
+    # Echoed so the frontend can assert the count rather than assume it.
+    return CounterTeamResponse(size=len(picks), picks=picks, coverage=coverage)

@@ -157,7 +157,9 @@ export interface paths {
         put?: never;
         /**
          * Suggest a team that counters this one
-         * @description Takes up to six Pokemon ids and returns six picks, each with a per-enemy breakdown, plus a coverage summary.
+         * @description Takes 1 to 6 Pokemon ids and returns **the same number** of picks, each with a per-enemy breakdown, plus a coverage summary.
+         *
+         *     The count is derived from the request rather than configured: a team of three is answered by three.
          *
          *     **Type effectiveness only.** No damage formula, no stats, no moves, no speed. `offense` is the best multiplier a pick's own types land on the enemy, `defense` is the inverse of the worst multiplier it takes back, and the score is their product.
          *
@@ -1021,10 +1023,16 @@ export interface components {
          *           "score": 4
          *         }
          *       ],
-         *       "picks": []
+         *       "picks": [],
+         *       "size": 1
          *     }
          */
         CounterTeamResponse: {
+            /**
+             * Size
+             * @description Number of picks, always equal to the number of Pokemon submitted.
+             */
+            size: number;
             /** Picks */
             picks: components["schemas"]["CounterPick"][];
             /** Coverage */

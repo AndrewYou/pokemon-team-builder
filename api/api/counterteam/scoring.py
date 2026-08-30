@@ -16,7 +16,9 @@ import numpy.typing as npt
 
 from api.derived.cache import DerivedCache, PokemonMeta
 
-TEAM_SIZE = 6
+# The game's roster limit, used only to reject an oversized request. The
+# number of picks is never this -- it is derived from the enemy team.
+MAX_TEAM_SIZE = 6
 
 # A candidate immune to everything the enemy's types can throw is strictly
 # better off than one merely resisting at 0.25x, so it sits one step further up
@@ -72,6 +74,15 @@ def score(
     )
 
 
+def candidate_type_mask(cache: DerivedCache) -> npt.NDArray[np.bool_]:
+    """[candidate, type] -> does this candidate have that type."""
+    mask = np.zeros((len(cache.meta), cache.vectors.shape[1]), dtype=bool)
+    for row, meta in enumerate(cache.meta):
+        for type_name in meta.types:
+            mask[row, cache.type_index[type_name]] = True
+    return mask
+
+
 def score_matrix(
     cache: DerivedCache, enemy_rows: list[int]
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
@@ -81,14 +92,8 @@ def score_matrix(
     by 6 enemies is one array operation rather than 6150 Python calls. Returns
     the scores plus the offence and taken components, which the rationales need.
     """
-    type_count = cache.vectors.shape[1]
-
-    # candidate_type_mask[c, t] is True where candidate c has type t, so the
-    # offensive lookup becomes a masked max over the enemy's defensive vector.
-    candidate_type_mask = np.zeros((len(cache.meta), type_count), dtype=bool)
-    for row, meta in enumerate(cache.meta):
-        for type_name in meta.types:
-            candidate_type_mask[row, cache.type_index[type_name]] = True
+    # The offensive lookup is a masked max over the enemy's defensive vector.
+    mask = candidate_type_mask(cache)
 
     offense = np.zeros((len(cache.meta), len(enemy_rows)), dtype=np.float64)
     taken = np.zeros_like(offense)
@@ -98,9 +103,7 @@ def score_matrix(
         # Absent types contribute 0, which never wins a max over non-negative
         # multipliers unless every present type is also 0 -- which is the
         # correct answer in that case.
-        offense[:, column] = np.max(
-            np.where(candidate_type_mask, enemy_vector[np.newaxis, :], 0.0), axis=1
-        )
+        offense[:, column] = np.max(np.where(mask, enemy_vector[np.newaxis, :], 0.0), axis=1)
         enemy_type_columns = [cache.type_index[t] for t in cache.meta[enemy_row].types]
         taken[:, column] = np.max(cache.vectors[:, enemy_type_columns], axis=1)
 
@@ -108,18 +111,30 @@ def score_matrix(
     return offense * defense, offense, taken
 
 
-def select_team(scores: npt.NDArray[np.float64], size: int = TEAM_SIZE) -> list[int]:
-    """Pick a team by marginal gain over what is already covered.
+def select_team(
+    scores: npt.NDArray[np.float64],
+    size: int,
+    type_mask: npt.NDArray[np.bool_] | None = None,
+) -> list[int]:
+    """Pick `size` counters by marginal gain over what is already covered.
+
+    `size` is required rather than defaulted. A default is what made every
+    request return six picks regardless of how many Pokemon it was answering:
+    the caller simply never passed one.
 
     Each round scores every remaining candidate by how much it *improves* the
     current best answer for each enemy, summed across enemies, and takes the
     largest. Clamping each term at zero is what makes it marginal: a candidate
     that is merely adequate against an enemy already well covered contributes
-    nothing for that enemy.
+    nothing for that enemy. Diminishing returns falls out of this structure --
+    there is deliberately no decay parameter.
 
-    Diminishing returns falls out of this structure. There is deliberately no
-    decay parameter: once an enemy is answered, the gain from answering it
-    again is already zero.
+    Two rounds can saturate: against three Fire types, one good Rock answers
+    all three and every remaining candidate has a marginal gain of zero. Ranking
+    those by raw score returns three near-identical Pokemon, which is a fragile
+    team and useless advice. So once coverage is saturated the ranking switches
+    to breadth of typing first. That is a tie-break among candidates that answer
+    the enemy team equally well, not a decay applied to the scoring.
     """
     candidate_count, enemy_count = scores.shape
     best = np.zeros(enemy_count, dtype=np.float64)
@@ -131,25 +146,44 @@ def select_team(scores: npt.NDArray[np.float64], size: int = TEAM_SIZE) -> list[
         if chosen:
             # Never pick the same Pokemon twice.
             gains[chosen] = -np.inf
-        pick = int(np.argmax(gains))
 
-        if gains[pick] <= 0.0:
-            # Every enemy is already answered as well as anything remaining can
-            # manage, so marginal gain has nothing left to distinguish. The
-            # caller still wants a full team of six, so fall back to raw total
-            # score and take the strongest remaining Pokemon rather than
-            # returning a short roster.
-            remaining = totals.copy()
-            if chosen:
-                remaining[chosen] = -np.inf
-            pick = int(np.argmax(remaining))
-            if not np.isfinite(remaining[pick]):
+        best_gain = gains.max() if gains.size else -np.inf
+        if not np.isfinite(best_gain):
+            break
+
+        if best_gain > 0:
+            # Still covering new ground: gain decides, breadth breaks ties.
+            pool = np.flatnonzero(gains >= best_gain - 1e-9)
+        else:
+            # Saturated. Every remaining candidate adds the same nothing to
+            # coverage, so the useful axis is what the team cannot yet hit.
+            pool = np.flatnonzero(np.isfinite(gains))
+            if pool.size == 0:
                 break
 
+        pick = _rank(pool, chosen, totals, type_mask)
         chosen.append(pick)
         best = np.maximum(best, scores[pick])
 
     return chosen
+
+
+def _rank(
+    pool: npt.NDArray[np.intp],
+    chosen: list[int],
+    totals: npt.NDArray[np.float64],
+    type_mask: npt.NDArray[np.bool_] | None,
+) -> int:
+    """Choose from `pool`, preferring typings the team does not already have."""
+    if type_mask is None or not chosen:
+        return int(pool[np.argmax(totals[pool])])
+
+    covered = type_mask[chosen].any(axis=0)
+    novelty = (type_mask[pool] & ~covered).sum(axis=1)
+    # Lexicographic: most new types, then highest score among those.
+    best_novelty = novelty.max()
+    tied = pool[novelty == best_novelty]
+    return int(tied[np.argmax(totals[tied])])
 
 
 def rationale(cache: DerivedCache, candidate_row: int, enemy_row: int, matchup: Matchup) -> str:

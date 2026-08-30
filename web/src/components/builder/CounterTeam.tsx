@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react'
+
 import type { CounterAnswer, CounterPick, TeamMember } from '@/api/client'
 import { useCounterTeam } from '@/api/queries'
 import { cn } from '@/lib/utils'
@@ -7,9 +9,9 @@ import { DisplayName, EmptyState, ErrorState, MultiplierBadge, Sprite, TypeBadge
 /**
  * One pick's reasoning, as a small table.
  *
- * The reasoning is the differentiator, so it is rendered inline rather than
- * hidden behind a tooltip. Phase 9 adds move, turns-to-KO, and speed fields to
- * each answer; they become extra columns here without the shape changing.
+ * The reasoning is the differentiator, so it is inline rather than behind a
+ * tooltip. A later damage model adds move, turns-to-KO and speed fields to each
+ * answer; they become extra columns without the shape changing.
  */
 function AnswerTable({ answers }: { answers: CounterAnswer[] }) {
   return (
@@ -26,15 +28,9 @@ function AnswerTable({ answers }: { answers: CounterAnswer[] }) {
           .sort((a, b) => b.multiplier - a.multiplier)
           .map((answer) => (
             <tr key={answer.enemy_id} className="border-border/50 border-t">
-              <td className="py-1">
-                <DisplayName name={answer.enemy_name} />
-              </td>
-              <td className="py-1">
-                <MultiplierBadge value={answer.multiplier} />
-              </td>
-              <td className="text-muted-foreground hidden py-1 sm:table-cell">
-                {answer.rationale}
-              </td>
+              <td className="py-1"><DisplayName name={answer.enemy_name} /></td>
+              <td className="py-1"><MultiplierBadge value={answer.multiplier} /></td>
+              <td className="text-muted-foreground hidden py-1 sm:table-cell">{answer.rationale}</td>
             </tr>
           ))}
       </tbody>
@@ -66,6 +62,28 @@ function PickCard({ pick }: { pick: CounterPick }) {
 export function CounterTeam({ members }: { members: TeamMember[] }) {
   const counter = useCounterTeam()
   const ids = members.map((member) => member.pokemon_id)
+  const empty = ids.length === 0
+
+  // A result describes the roster it was generated for. Once that roster
+  // changes the picks are answering a team that no longer exists, so they are
+  // dimmed rather than silently presented as current.
+  const [generatedFor, setGeneratedFor] = useState<string | null>(null)
+  const signature = ids.join(',')
+  const stale = counter.data != null && generatedFor !== null && generatedFor !== signature
+
+  // A team emptied entirely has nothing to be stale about.
+  const reset = useRef(counter.reset)
+  reset.current = counter.reset
+  useEffect(() => {
+    if (empty) {
+      reset.current()
+      setGeneratedFor(null)
+    }
+  }, [empty])
+
+  function generate() {
+    counter.mutate(ids, { onSuccess: () => setGeneratedFor(signature) })
+  }
 
   return (
     <section className="flex flex-col gap-3">
@@ -73,30 +91,52 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
         <h2 className="font-display mr-auto text-sm font-medium">Counter-team</h2>
         <button
           type="button"
-          disabled={ids.length === 0 || counter.isPending}
-          onClick={() => counter.mutate(ids)}
+          // Prevented rather than attempted: an empty team cannot produce a
+          // counter team, so the request is never fired and no error is shown.
+          disabled={empty || counter.isPending}
+          onClick={generate}
+          title={empty ? 'Add at least one Pokémon to your team' : undefined}
           className={cn(
-            'border-border bg-card h-8 rounded-[8px] border px-3 text-xs font-medium',
-            'hover:bg-muted disabled:opacity-40',
+            'border-border bg-card h-8 shrink-0 rounded-[8px] border px-3 text-xs font-medium',
+            'hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40',
           )}
         >
-          {counter.isPending ? 'Thinking…' : 'Build counter-team'}
+          {counter.isPending
+            ? 'Thinking…'
+            : // The count is in the label so the size is known before clicking.
+              `Generate${empty ? '' : ` (${ids.length})`}`}
         </button>
       </header>
 
+      {empty ? (
+        <p className="text-muted-foreground text-xs">Add at least one Pokémon to your team.</p>
+      ) : null}
+
       {counter.isError ? (
-        <ErrorState message="Could not build a counter-team." onRetry={() => counter.mutate(ids)} />
+        <ErrorState message="Could not build a counter-team." onRetry={generate} />
       ) : counter.isPending ? (
+        // One skeleton per pick that is coming, so the list does not resize.
         <ul className="flex flex-col gap-2">
-          {Array.from({ length: 3 }, (_, index) => (
+          {Array.from({ length: Math.max(1, ids.length) }, (_, index) => (
             <li key={index} className="card-surface h-28 p-3">
               <div className="bg-muted skeleton-shimmer relative h-full w-full overflow-hidden rounded" />
             </li>
           ))}
         </ul>
       ) : counter.data ? (
-        <>
+        <div className={cn('flex flex-col gap-2', stale && 'opacity-50')}>
+          {stale ? (
+            <button
+              type="button"
+              onClick={generate}
+              className="border-border hover:bg-muted flex items-center gap-2 rounded-[8px] border border-dashed px-2 py-1.5 text-left text-[11px]"
+            >
+              <span className="flex-1">Team changed — these answer the previous roster.</span>
+              <span className="font-medium">Regenerate</span>
+            </button>
+          ) : null}
           <ul className="flex flex-col gap-2">
+            {/* However many came back. No fixed grid, no padding to six. */}
             {counter.data.picks.map((pick) => (
               <PickCard key={pick.id} pick={pick} />
             ))}
@@ -115,15 +155,11 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
               ))}
             </ul>
           </div>
-        </>
+        </div>
       ) : (
         <EmptyState
-          title={ids.length === 0 ? 'Add Pokémon to your team first' : 'No counter-team yet'}
-          hint={
-            ids.length === 0
-              ? 'Drag from the catalog into a slot, then build a counter-team.'
-              : 'Suggests six Pokémon that answer this team, with the reasoning for each.'
-          }
+          title="No counter-team yet"
+          hint={`Suggests ${ids.length} Pokémon that answer this team, with the reasoning for each.`}
         />
       )}
     </section>

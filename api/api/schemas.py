@@ -787,12 +787,16 @@ class CounterTeamResponse(BaseModel):
     moves, no speed. Phase 9 replaces the scoring function behind this shape.
     """
 
+    size: int = Field(
+        description="Number of picks, always equal to the number of Pokemon submitted."
+    )
     picks: list[CounterPick]
     coverage: list[CoverageEntry]
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "size": 1,
                 "picks": [],
                 "coverage": [
                     {

@@ -254,3 +254,67 @@ class TestRationale:
         matchup = scoring.score(cache, _row(cache, 143), _row(cache, 94))
         text = scoring.rationale(cache, _row(cache, 143), _row(cache, 94), matchup)
         assert "cannot touch" in text
+
+
+class TestEqualSize:
+    """The counter team matches the team it answers. The count is derived from
+    the request rather than configured, so there is no way to ask for a
+    mismatch."""
+
+    @pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 6])
+    def test_picks_match_the_enemy_count(self, cache: DerivedCache, count: int) -> None:
+        enemies = list(ROSTER)[:count]
+        result = build_counter_team(cache, enemies)
+        assert result.size == len(result.picks) == count
+
+    @pytest.mark.parametrize("count", [1, 2, 3])
+    def test_coverage_has_one_entry_per_enemy(self, cache: DerivedCache, count: int) -> None:
+        enemies = list(ROSTER)[:count]
+        assert len(build_counter_team(cache, enemies).coverage) == count
+
+    def test_every_pick_answers_every_enemy(self, cache: DerivedCache) -> None:
+        result = build_counter_team(cache, [6, 9, 94])
+        assert all(len(pick.answers) == 3 for pick in result.picks)
+
+    def test_size_field_matches_the_picks(self, cache: DerivedCache) -> None:
+        """Echoed so the frontend can assert rather than assume."""
+        result = build_counter_team(cache, [6, 9])
+        assert result.size == len(result.picks)
+
+    def test_select_team_requires_a_size(self) -> None:
+        """A default is what made every request return six picks: the caller
+        never passed one, so nothing looked wrong at the call site."""
+        import inspect
+
+        signature = inspect.signature(scoring.select_team)
+        assert signature.parameters["size"].default is inspect.Parameter.empty
+
+
+class TestDiversity:
+    """Against several Pokemon of one type, one good answer covers them all and
+    every remaining candidate has zero marginal gain. Ranking those by raw score
+    returns near-identical Pokemon, which is a fragile team and useless advice."""
+
+    def test_saturated_rounds_prefer_unrepresented_types(self) -> None:
+        # Two candidates answer identically; the third is weaker but new.
+        scores = np.array([[8.0], [8.0], [8.0]])
+        mask = np.array(
+            [
+                [True, False, False],  # picked first
+                [True, False, False],  # same typing, nothing new
+                [False, True, False],  # a type the team lacks
+            ]
+        )
+        assert scoring.select_team(scores, size=2, type_mask=mask) == [0, 2]
+
+    def test_without_a_mask_the_ranking_is_unchanged(self) -> None:
+        """Diversity is a tie-break, not a change to the scoring."""
+        scores = np.array([[8.0], [8.0], [1.0]])
+        assert scoring.select_team(scores, size=2) == [0, 1]
+
+    def test_marginal_gain_still_wins_over_breadth(self) -> None:
+        """Covering an uncovered enemy beats broadening the typing."""
+        scores = np.array([[4.0, 0.0], [0.0, 4.0], [0.0, 0.0]])
+        mask = np.array([[True, False, False], [True, False, False], [False, True, True]])
+        # Candidate 1 shares a typing with 0 but answers the second enemy.
+        assert scoring.select_team(scores, size=2, type_mask=mask) == [0, 1]

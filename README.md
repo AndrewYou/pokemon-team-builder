@@ -346,11 +346,23 @@ defense = 1 / worst multiplier the enemy's types land back
 score   = offense * defense
 ```
 
-Picks are chosen over six rounds by marginal gain: each round takes whichever
-candidate most improves the currently worst-covered enemies. Diminishing returns
-come from that structure, not a decay parameter -- once an enemy is answered,
-answering it again adds nothing. If coverage saturates before six picks, the
-roster is filled by total score rather than returned short.
+The counter team is **the same size as the team it answers**: three Pokemon in,
+three out. The count is derived from the request rather than configured, so
+there is no way to ask for a mismatch, and `select_team` takes a required size
+rather than a default -- a default is exactly what made every request return six
+regardless.
+
+Picks are chosen by marginal gain, one round per enemy: each round takes
+whichever candidate most improves the currently worst-covered enemies.
+Diminishing returns come from that structure, not a decay parameter -- once an
+enemy is answered, answering it again adds nothing.
+
+Rounds can saturate. Against three Fire types, one good Rock answer covers all
+three and every remaining candidate has a marginal gain of zero; ranking those
+by raw score returns three near-identical Pokemon, which is a fragile team and
+useless advice. Once coverage is saturated the ranking switches to breadth of
+typing. That is a tie-break among candidates that answer the enemy team equally
+well, not a decay applied to the scoring.
 
 Immunity is capped rather than infinite: a pick that takes nothing from the
 enemy would be a division by zero, so it scores one step above the best
