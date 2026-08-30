@@ -200,6 +200,7 @@ export default function BuilderPage() {
       activeType={draggingType}
       onSelect={select}
       onRemove={removeMember}
+      onReplaceRoster={persist}
     />
   )
 

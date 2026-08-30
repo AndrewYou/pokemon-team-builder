@@ -370,7 +370,22 @@ sequential scan. Stored names are all lowercase, so lowering the search term
 gives case-insensitivity and index usage at once. `GET /admin/debug/explain`
 shows the plan for each query so this stays checkable rather than assumed.
 
-**Teams** (`/teams`) replaces the whole roster in one request. There are no
+**Teams** (`/teams`) replaces the whole roster in one request. Clearing is the
+same call with an empty array rather than a separate endpoint or six removes,
+and it empties the roster without touching the team -- "Clear" and "Delete team"
+are different words in different places with different levels of confirmation.
+
+Clearing shows a toast with an undo rather than a confirmation dialog. It is
+reversible and low-stakes, and a modal on every clear trains people to click
+through it, which is what makes the one dialog that should stop them get
+dismissed unread too. Undo restores the exact previous order, captured before
+the clear.
+
+"Random" fills six slots server-side via `GET /pokemon/random`. Sampling
+client-side could only draw from pages already fetched, which would quietly
+favour the start of the Pokedex. That route is declared before
+`/pokemon/{id}` -- routes match in order, and the other way round "random" is
+parsed as an integer id and rejected. There are no
 add, remove, or move endpoints: a drag-and-drop reorder produces an entirely
 new ordering, so sending the array is simpler and atomic. It also sidesteps the
 `UNIQUE(team_id, slot)` constraint, which a partial reorder would trip while

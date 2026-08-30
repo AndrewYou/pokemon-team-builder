@@ -111,6 +111,19 @@ export function useCatalog(filters: CatalogFilters) {
   })
 }
 
+/** A random sample, for filling a team in one click. */
+export function useRandomTeam() {
+  return useMutation({
+    mutationFn: async (count: number) => {
+      const { data, error } = await api.GET('/pokemon/random', {
+        params: { query: { count } },
+      })
+      if (error) throw new Error('Could not pick a random team')
+      return data
+    },
+  })
+}
+
 export function useTeams() {
   return useQuery({
     queryKey: keys.teams,

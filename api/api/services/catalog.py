@@ -198,6 +198,20 @@ async def list_pokemon(
     )
 
 
+async def random_pokemon(session: AsyncSession, count: int) -> list[PokemonSummary]:
+    """A random sample, for filling a team in one click.
+
+    ORDER BY random() sorts the whole table, which is the wrong shape at scale
+    but costs nothing across a thousand rows and is exactly right here. The
+    alternative -- sampling ids client-side -- can only draw from pages already
+    fetched, so it would quietly favour the start of the Pokedex.
+    """
+    rows = (
+        await session.execute(select(*_LIST_COLUMNS).order_by(func.random()).limit(count))
+    ).all()
+    return [_summary(row) for row in rows]
+
+
 async def get_pokemon(session: AsyncSession, pokemon_id: int) -> PokemonDetail | None:
     """One Pokemon with its movepool."""
     row = (await session.execute(select(*_LIST_COLUMNS).where(Pokemon.id == pokemon_id))).first()

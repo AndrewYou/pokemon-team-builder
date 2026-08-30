@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from api.dependencies import SessionDep
-from api.schemas import PokemonDetail, PokemonPage, TypeName, error_response
+from api.schemas import PokemonDetail, PokemonPage, PokemonSummary, TypeName, error_response
 from api.services import catalog as catalog_service
 
 router = APIRouter(prefix="/pokemon", tags=["catalog"])
@@ -99,6 +99,28 @@ async def list_pokemon(
         )
     except catalog_service.CursorError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+# Declared before /{pokemon_id}. Routes match in declaration order, so the
+# other way round "random" is parsed as an integer id and answered with a 422.
+@router.get(
+    "/random",
+    response_model=list[PokemonSummary],
+    summary="Get a random sample",
+    description=(
+        "A random selection, for filling a team in one click. Sampled across the "
+        "whole catalog rather than from pages the client happens to have loaded, "
+        "which would favour the start of the Pokedex."
+    ),
+)
+async def random_pokemon(
+    response: Response,
+    session: SessionDep,
+    count: Annotated[int, Query(ge=1, le=catalog_service.MAX_LIMIT)] = 6,
+) -> list[PokemonSummary]:
+    # Explicitly uncached: a cached random sample is the same sample.
+    response.headers["Cache-Control"] = "no-store"
+    return await catalog_service.random_pokemon(session, count)
 
 
 @router.get(
