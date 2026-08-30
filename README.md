@@ -398,11 +398,27 @@ round count and the response shape were untouched:
 ```
 outgoing = best damage fraction this pick lands per turn
 incoming = best damage fraction it takes back
-score    = outgoing / (outgoing + incoming + turn cost), bonus for moving first
+taken    = incoming x however many turns they actually get to act
+score    = min(outgoing, 1.2) / (min(outgoing, 1.2) + taken + turn cost)
 ```
 
 Both directions are required. Type effectiveness alone could not tell a counter
 from a casualty: dealing 0.6 a turn while taking 1.2 is losing.
+
+Two things in that formula are deliberate.
+
+**Outgoing damage is capped at 1.2.** Everything above a full health bar is
+overkill, and uncapped it dominated the ratio: a move dealing 4.0 and one
+dealing 1.5 both knock out in one turn, but the first scored far higher for
+damage that is never dealt. The true fraction is still returned for display; the
+clamp lives inside `score()` only.
+
+**Moving first discounts what you take, rather than adding a bonus.** A pick
+that outspeeds and knocks out in one turn takes nothing at all, so incoming is
+multiplied by `max(0, our_turns - 1)`. Aggron previously scored 0.75 against
+things that killed it before it acted, because a flat speed multiplier could not
+express "never gets hit". Modelling turn order properly *and* keeping the flat
+bonus would double-count, so the bonus is gone.
 
 The score is a **continuous fraction of a health bar, never a turn count**.
 Rounding to turns collapses the model into about four values, which produces
@@ -417,6 +433,46 @@ against every defender. Lossless, and it takes ~40 moves to 14.
 
 `GET /admin/debug/matchup-detail?attacker=248&defender=6` shows every number
 behind one pairing.
+
+### Turn margin is what the UI shows
+
+The score is a good sort key and a poor thing to read. A 0-1 number with no
+units invites the reader to invent a meaning for it, and rendered next to type
+badges it was being read as a type multiplier -- "0.84x" looks like *not very
+effective* when it is in fact a strong result on a higher-is-better scale.
+
+So the table shows turn margin instead:
+
+```
+margin = their_turns_to_ko - our_turns_to_ko - (0 if we move first else 1)
+```
+
+Turns to spare, as a signed integer. `+3` means they would need three more turns
+to knock us out than we need to knock them out. The margin drives a verdict --
+**Dominates** at +3, **Wins** at +1, **Trades** at 0, **Loses** below -- coloured
+by outcome and never by type, because the colour is saying something about the
+fight rather than about the Pokemon.
+
+The subtraction is not symmetric, and that is the point: whoever moves second
+loses the tie. Without it a pick that knocks out in one turn while moving first
+came back as `-1`, reported as "Loses", against an opponent that also needs one
+turn. It wins that exchange outright.
+
+The score stays in the API response and remains the sort key. It is simply not
+what a person reads.
+
+### Declared simplifications
+
+Level 50, no EVs or IVs, neutral nature, average damage roll. Beyond that:
+
+- Multi-turn moves are treated as single-turn. Solar Beam charges for a turn in
+  the real game; here it lands immediately, which overstates it.
+- Self-debuffs are not modelled. Draco Meteor halves the user's Special Attack
+  after it lands, and nothing here tracks that.
+- No tier restrictions, so legendary Pokemon dominate the picks. Mewtwo answers
+  almost everything, and the selector has no reason not to say so. Accepted as
+  scope, not an oversight -- a competitive format would be a filter on the
+  candidate pool, not a change to the scoring.
 
 A result describes the roster it was generated for. When the roster changes the
 previous answers are collapsed behind an explanation naming both counts, not

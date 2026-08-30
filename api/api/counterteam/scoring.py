@@ -9,7 +9,6 @@ persistence: a request is a pure function of the enemy ids and the cache.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,11 +16,14 @@ import numpy as np
 import numpy.typing as npt
 
 from api.battle.damage import (
-    FIRST_STRIKE_BONUS,
     LEVEL_TERM,
+    OVERKILL_CAP,
     TURN_COST,
     damage_fraction,
     matchup_score,
+    turn_margin,
+    turns_to_ko,
+    verdict,
 )
 from api.derived.cache import DerivedCache, PokemonMeta
 
@@ -49,9 +51,37 @@ class Matchup:
     outspeeds: bool
 
     @property
-    def turns_to_ko(self) -> int:
-        """Display only. The scorer works on the continuous fraction."""
-        return math.ceil(1 / self.outgoing) if self.outgoing > 0 else 0
+    def our_turns(self) -> int | None:
+        """Turns we need. None when we cannot knock them out at all."""
+        return turns_to_ko(self.outgoing)
+
+    @property
+    def their_turns(self) -> int | None:
+        """Turns they need to knock us out. None when they never can.
+
+        Reported raw. The speed adjustment lives in `margin`, so this stays a
+        plain answer to "how many hits can we survive".
+        """
+        return turns_to_ko(self.incoming)
+
+    @property
+    def margin(self) -> int | None:
+        return turn_margin(self.outgoing, self.incoming, self.outspeeds)
+
+    @property
+    def verdict(self) -> str:
+        return verdict(self.margin, self.outgoing > 0, self.incoming > 0)
+
+    @property
+    def incoming_over_exchange(self) -> float:
+        """Damage we actually take, not the per-turn rate.
+
+        Zero when we outspeed and knock them out in one turn, because they
+        never get to attack.
+        """
+        from api.battle.damage import defender_turns
+
+        return self.incoming * defender_turns(self.our_turns, self.outspeeds)
 
 
 def candidate_type_mask(cache: DerivedCache) -> npt.NDArray[np.bool_]:
@@ -178,12 +208,19 @@ def score_matrix(cache: DerivedCache, enemy_rows: list[int]) -> ScoreGrid:
         incoming[:, column] = incoming_from(cache, enemy_row)
         outspeeds[:, column] = cache.stats[:, 5] > cache.stats[enemy_row, 5]
 
-    # The vectorised form of matchup_score. It is duplicated rather than
-    # called per element, so the constants are imported from the same place
-    # and a test asserts the two paths agree on every pair.
-    effective = np.where(outspeeds, outgoing * (1 + FIRST_STRIKE_BONUS), outgoing)
+    # The vectorised form of matchup_score. Duplicated rather than called per
+    # element, so the constants come from the same place and a test asserts the
+    # two paths agree on every pair.
     with np.errstate(invalid="ignore", divide="ignore"):
-        scores = np.where(outgoing > 0, effective / (effective + incoming + TURN_COST), 0.0)
+        our_turns = np.where(outgoing > 0, np.ceil(1 / np.where(outgoing > 0, outgoing, 1)), 0)
+    # Moving first removes a turn from them rather than adding a bonus to us,
+    # so a pick that outspeeds and one-shots takes nothing at all.
+    their_turns = np.where(outspeeds, np.maximum(0, our_turns - 1), our_turns)
+    taken = incoming * their_turns
+
+    capped = np.minimum(outgoing, OVERKILL_CAP)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        scores = np.where(outgoing > 0, capped / (capped + taken + TURN_COST), 0.0)
 
     return ScoreGrid(
         scores=scores,
@@ -283,23 +320,34 @@ def _rank(
     return int(candidates[np.argmin(ids[candidates])])
 
 
+def _title(name: str) -> str:
+    return " ".join(part.capitalize() for part in name.split("-"))
+
+
 def rationale(cache: DerivedCache, candidate_row: int, enemy_row: int, matchup: Matchup) -> str:
-    """Explain a matchup in the terms a player would use."""
+    """Explain a matchup without leaving who-takes-what ambiguous.
+
+    The old wording -- "takes 355% per turn ... takes 74% back" -- used the same
+    verb for both directions and reported damage the pick never actually takes
+    when it outspeeds and one-shots.
+    """
     candidate = cache.meta[candidate_row]
     enemy = cache.meta[enemy_row]
-    enemy_typing = "/".join(enemy.types)
 
     if matchup.outgoing <= 0:
-        return f"{candidate.name} cannot damage {enemy_typing}"
+        return f"{_title(candidate.name)} cannot damage {'/'.join(enemy.types)}"
 
-    lead = (
-        f"{matchup.move_name} ({matchup.move_type}) takes {matchup.outgoing:.0%} "
-        f"per turn, {matchup.turns_to_ko} to KO"
-    )
-    if matchup.incoming <= 0:
-        return f"{lead}; takes nothing back"
-    back = f"takes {matchup.incoming:.0%} back"
-    return f"{lead}; {back}{'; moves first' if matchup.outspeeds else ''}"
+    move = f"{_title(matchup.move_name)} ({_title(matchup.move_type)})"
+    parts = [f"{move} — deals {matchup.outgoing:.0%} per turn, KOs in {matchup.our_turns}"]
+
+    if matchup.outspeeds:
+        # Report what is actually taken, not the hypothetical: a pick that
+        # outspeeds and one-shots takes nothing.
+        parts.append(f"moves first, takes {matchup.incoming_over_exchange:.0%} back")
+    else:
+        parts.append(f"takes {matchup.incoming_over_exchange:.0%} back")
+
+    return "; ".join(parts)
 
 
 def meta_of(cache: DerivedCache, row: int) -> PokemonMeta:

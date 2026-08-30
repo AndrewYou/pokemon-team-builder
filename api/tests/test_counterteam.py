@@ -162,9 +162,22 @@ class TestScore:
         # Gengar at 110 outruns Snorlax at 30.
         assert result.outspeeds is True
 
-    def test_turns_to_ko_is_display_only(self, cache: DerivedCache) -> None:
+    def test_turn_counts_are_display_only(self, cache: DerivedCache) -> None:
         result = scoring.score(cache, _row(cache, 248), _row(cache, 6))
-        assert result.turns_to_ko == math.ceil(1 / result.outgoing)
+        assert result.our_turns == math.ceil(1 / result.outgoing)
+
+    def test_margin_sign_matches_the_verdict(self, cache: DerivedCache) -> None:
+        for candidate in cache.pokemon_ids:
+            for enemy in cache.pokemon_ids:
+                result = scoring.score(cache, _row(cache, candidate), _row(cache, enemy))
+                if result.margin is None:
+                    continue
+                if result.margin > 0:
+                    assert result.verdict in {"Wins", "Dominates"}
+                elif result.margin == 0:
+                    assert result.verdict == "Trades"
+                else:
+                    assert result.verdict == "Loses"
 
 
 class TestImmunity:
@@ -330,8 +343,21 @@ class TestRationale:
     def test_names_the_move_and_what_it_does(self, cache: DerivedCache) -> None:
         matchup = scoring.score(cache, _row(cache, 248), _row(cache, 6))
         text = scoring.rationale(cache, _row(cache, 248), _row(cache, 6), matchup)
-        assert matchup.move_name in text
-        assert "per turn" in text and "to KO" in text
+        assert "Stone Edge" in text and "(Rock)" in text
+        assert "deals" in text and "KOs in" in text
+
+    def test_says_who_takes_what(self, cache: DerivedCache) -> None:
+        """The old wording used the same verb for both directions."""
+        matchup = scoring.score(cache, _row(cache, 248), _row(cache, 6))
+        text = scoring.rationale(cache, _row(cache, 248), _row(cache, 6), matchup)
+        assert "deals" in text and "back" in text
+
+    def test_an_outspeeding_one_shot_reports_no_damage_taken(self, cache: DerivedCache) -> None:
+        """Reporting the per-turn rate would describe damage never taken."""
+        matchup = scoring.score(cache, _row(cache, 94), _row(cache, 143))
+        if matchup.outspeeds and matchup.our_turns == 1:
+            text = scoring.rationale(cache, _row(cache, 94), _row(cache, 143), matchup)
+            assert "takes 0% back" in text
 
     def test_explains_a_hopeless_matchup(self, chart: dict[str, dict[str, float]]) -> None:
         small = cache_for(chart)

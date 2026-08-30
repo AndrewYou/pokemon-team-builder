@@ -727,6 +727,24 @@ class CounterAnswer(BaseModel):
         default=0, description="Rounded for display only; scoring uses the fraction."
     )
     outspeeds: bool = Field(default=False, description="Whether this pick moves first.")
+    # Turn margin: the number a person can actually read. Selection and sorting
+    # still use `multiplier`; these are derived for display.
+    our_turns: int | None = Field(
+        default=None, description="Turns we need to KO. Null when we never can."
+    )
+    their_turns: int | None = Field(
+        default=None,
+        description="Turns they need to KO us, after the one they lose to our speed. "
+        "Null when they never can.",
+    )
+    margin: int | None = Field(
+        default=None,
+        description="their_turns minus our_turns. Positive means we win the 1v1 with "
+        "that many turns to spare. Null when either side can never KO the other.",
+    )
+    verdict: str = Field(
+        default="", description="Dominates, Wins, Trades, or Loses, from the margin."
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -740,6 +758,10 @@ class CounterAnswer(BaseModel):
                 "damage_fraction": 0.96,
                 "turns_to_ko": 2,
                 "outspeeds": False,
+                "our_turns": 2,
+                "their_turns": 5,
+                "margin": 3,
+                "verdict": "Dominates",
             }
         }
     )

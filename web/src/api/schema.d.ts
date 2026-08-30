@@ -999,11 +999,15 @@ export interface components {
          *       "damage_fraction": 0.96,
          *       "enemy_id": 6,
          *       "enemy_name": "charizard",
+         *       "margin": 3,
          *       "move_name": "stone-edge",
          *       "multiplier": 0.79,
+         *       "our_turns": 2,
          *       "outspeeds": false,
          *       "rationale": "stone-edge (rock) takes 96% per turn, 2 to KO; takes 25% back",
-         *       "turns_to_ko": 2
+         *       "their_turns": 5,
+         *       "turns_to_ko": 2,
+         *       "verdict": "Dominates"
          *     }
          */
         CounterAnswer: {
@@ -1051,6 +1055,27 @@ export interface components {
              * @default false
              */
             outspeeds: boolean;
+            /**
+             * Our Turns
+             * @description Turns we need to KO. Null when we never can.
+             */
+            our_turns?: number | null;
+            /**
+             * Their Turns
+             * @description Turns they need to KO us, after the one they lose to our speed. Null when they never can.
+             */
+            their_turns?: number | null;
+            /**
+             * Margin
+             * @description their_turns minus our_turns. Positive means we win the 1v1 with that many turns to spare. Null when either side can never KO the other.
+             */
+            margin?: number | null;
+            /**
+             * Verdict
+             * @description Dominates, Wins, Trades, or Loses, from the margin.
+             * @default
+             */
+            verdict: string;
         };
         /**
          * CounterPick

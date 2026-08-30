@@ -4,33 +4,84 @@ import type { CounterAnswer, CounterPick, TeamMember } from '@/api/client'
 import { useCounterTeam } from '@/api/queries'
 import { cn } from '@/lib/utils'
 
-import { DisplayName, EmptyState, ErrorState, MultiplierBadge, Sprite, TypeBadges } from './primitives'
+import {
+  DisplayName,
+  EmptyState,
+  ErrorState,
+  MarginCell,
+  Sprite,
+  TypeBadges,
+  VerdictBadge,
+} from './primitives'
+import { InfoTip } from './InfoTip'
+
+const MARGIN_HELP =
+  'How many turns to spare we win the 1v1 by. +3 means they would need three ' +
+  'more turns to knock us out than we need to knock them out, counting who ' +
+  'moves first. Higher is better; negative means we lose the exchange.'
+
+const VERDICT_HELP = (
+  <>
+    <strong>Dominates</strong> +3 or more · <strong>Wins</strong> +1 to +2 · <strong>Trades</strong>{' '}
+    0 · <strong>Loses</strong> below 0
+  </>
+)
 
 /**
  * One pick's reasoning, as a small table.
  *
  * The reasoning is the differentiator, so it is inline rather than behind a
- * tooltip. A later damage model adds move, turns-to-KO and speed fields to each
- * answer; they become extra columns without the shape changing.
+ * tooltip.
+ *
+ * The 0-1 score is a good sort key and a poor thing to read, so it stays in the
+ * API response and out of this table. Turn margin is what a person can act on.
  */
 function AnswerTable({ answers }: { answers: CounterAnswer[] }) {
   return (
     <table className="w-full text-left text-[11px]">
       <thead className="text-muted-foreground">
         <tr>
-          <th scope="col" className="font-normal">Against</th>
-          <th scope="col" className="w-16 font-normal">Score</th>
-          <th scope="col" className="hidden font-normal sm:table-cell">Why</th>
+          <th scope="col" className="font-normal">
+            Against
+          </th>
+          <th scope="col" className="font-normal">
+            <span className="inline-flex items-center gap-1">
+              Result
+              <InfoTip label="What the verdicts mean">{VERDICT_HELP}</InfoTip>
+            </span>
+          </th>
+          <th scope="col" className="w-14 font-normal">
+            <span className="inline-flex items-center gap-1">
+              Margin
+              <InfoTip label="What turn margin means">{MARGIN_HELP}</InfoTip>
+            </span>
+          </th>
+          <th scope="col" className="hidden font-normal sm:table-cell">
+            Why
+          </th>
         </tr>
       </thead>
       <tbody>
         {[...answers]
           .sort((a, b) => b.multiplier - a.multiplier)
           .map((answer) => (
-            <tr key={answer.enemy_id} className="border-border/50 border-t">
-              <td className="py-1"><DisplayName name={answer.enemy_name} /></td>
-              <td className="py-1"><MultiplierBadge value={answer.multiplier} /></td>
-              <td className="text-muted-foreground hidden py-1 sm:table-cell">{answer.rationale}</td>
+            <tr key={answer.enemy_id} className="border-border/50 border-t align-top">
+              <td className="py-1">
+                <DisplayName name={answer.enemy_name} />
+              </td>
+              <td className="py-1">
+                <VerdictBadge verdict={answer.verdict} />
+              </td>
+              <td className="py-1">
+                <MarginCell
+                  margin={answer.margin}
+                  ourTurns={answer.our_turns}
+                  theirTurns={answer.their_turns}
+                />
+              </td>
+              <td className="text-muted-foreground hidden py-1 sm:table-cell">
+                {answer.rationale}
+              </td>
             </tr>
           ))}
       </tbody>
@@ -50,13 +101,29 @@ function PickCard({ pick }: { pick: CounterPick }) {
       <div className="flex items-center gap-3">
         <Sprite src={pick.sprite_url} alt={pick.name} size="sm" type={primary} />
         <div className="min-w-0">
-          <DisplayName name={pick.name} className="font-display block truncate text-sm font-medium" />
+          <DisplayName
+            name={pick.name}
+            className="font-display block truncate text-sm font-medium"
+          />
           <TypeBadges types={pick.types} className="mt-1" />
         </div>
       </div>
       <AnswerTable answers={pick.answers} />
     </li>
   )
+}
+
+/**
+ * The verdict a pick earned against one enemy.
+ *
+ * Coverage carries the raw score and not the verdict, and the score is exactly
+ * what must not be shown here, so it is read back off the pick that produced it.
+ */
+function verdictFor(picks: CounterPick[], pickId: number, enemyId: number): string {
+  const answer = picks
+    .find((pick) => pick.id === pickId)
+    ?.answers.find((entry) => entry.enemy_id === enemyId)
+  return answer?.verdict ?? ''
 }
 
 export function CounterTeam({ members }: { members: TeamMember[] }) {
@@ -133,12 +200,10 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
             // for a team of one read as the current answer no matter how faint
             // they are, and the count is the very thing that changed.
             <div className="card-surface flex flex-col gap-2 p-3">
-              <p className="text-xs">
-                Your team changed since these were generated.
-              </p>
+              <p className="text-xs">Your team changed since these were generated.</p>
               <p className="text-muted-foreground text-[11px]">
-                {staleSize} answer{staleSize === 1 ? '' : 's'} for your previous team; your
-                team now has {ids.length}.
+                {staleSize} answer{staleSize === 1 ? '' : 's'} for your previous team; your team now
+                has {ids.length}.
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -177,7 +242,13 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
                         best answer{' '}
                         <DisplayName name={entry.best_answer} className="text-foreground" />
                       </span>
-                      <MultiplierBadge value={entry.score} />
+                      <VerdictBadge
+                        verdict={verdictFor(
+                          counter.data.picks,
+                          entry.best_answer_id,
+                          entry.enemy_id,
+                        )}
+                      />
                     </li>
                   ))}
                 </ul>

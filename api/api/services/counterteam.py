@@ -72,7 +72,11 @@ def build_counter_team(cache: DerivedCache, enemy_ids: list[int]) -> CounterTeam
                     move_name=matchup.move_name,
                     damage_class=matchup.damage_class,
                     damage_fraction=round(matchup.outgoing, 4),
-                    turns_to_ko=matchup.turns_to_ko,
+                    turns_to_ko=matchup.our_turns or 0,
+                    our_turns=matchup.our_turns,
+                    their_turns=matchup.their_turns,
+                    margin=matchup.margin,
+                    verdict=matchup.verdict,
                     outspeeds=matchup.outspeeds,
                 )
             )

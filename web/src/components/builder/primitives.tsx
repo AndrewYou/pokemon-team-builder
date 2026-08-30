@@ -98,24 +98,57 @@ export function TypeBadges({ types, className }: { types: string[]; className?: 
 }
 
 /**
- * An effectiveness multiplier, coloured by severity.
+ * The verdict for a matchup.
  *
- * Severity rather than type here: the number is the message, and five
- * distinguishable steps read faster than a continuous scale.
+ * Coloured by outcome, never by type: this is analysis, not Pokemon data, and
+ * reusing the type palette here would suggest the colour meant something about
+ * the Pokemon rather than about the fight.
  */
-export function MultiplierBadge({ value }: { value: number }) {
-  const severity =
-    value === 0 ? 'immune' : value >= 4 ? 'quad' : value >= 2 ? 'super' : value >= 1 ? 'neutral' : 'resist'
-  const color = `var(--sev-${severity})`
+export function VerdictBadge({ verdict }: { verdict: string }) {
+  const tone =
+    {
+      Dominates: 'text-emerald-400 bg-emerald-400/12',
+      Wins: 'text-emerald-500/90 bg-emerald-500/10',
+      Trades: 'text-amber-400 bg-amber-400/12',
+      Loses: 'text-rose-400/90 bg-rose-400/10',
+    }[verdict] ?? 'text-muted-foreground bg-muted'
+
+  return (
+    <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold', tone)}>
+      {verdict}
+    </span>
+  )
+}
+
+/**
+ * Turn margin: how many turns to spare we win by.
+ *
+ * A signed integer reads instantly where a 0-1 score does not. Null means one
+ * side can never knock the other out, so a difference of turns is undefined --
+ * rendered in words rather than as a very large number.
+ */
+export function MarginCell({
+  margin,
+  ourTurns,
+  theirTurns,
+}: {
+  margin: number | null | undefined
+  ourTurns: number | null | undefined
+  theirTurns: number | null | undefined
+}) {
+  if (margin === null || margin === undefined) {
+    const text = ourTurns == null ? "Can't KO" : 'Never KOs us'
+    return <span className="text-muted-foreground text-[10px]">{text}</span>
+  }
   return (
     <span
-      className="tabular inline-flex min-w-12 justify-center rounded-full px-2 py-0.5 text-xs font-semibold"
-      style={{
-        color,
-        background: `color-mix(in oklch, ${color} 14%, transparent)`,
-      }}
+      className={cn(
+        'tabular text-xs font-semibold',
+        margin > 0 ? 'text-emerald-500' : margin === 0 ? 'text-amber-400' : 'text-rose-400',
+      )}
+      title={`We KO in ${ourTurns}; they need ${theirTurns}`}
     >
-      {value % 1 === 0 ? value : value.toFixed(2).replace(/0+$/, '')}x
+      {margin > 0 ? `+${margin}` : margin}
     </span>
   )
 }

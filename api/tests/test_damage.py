@@ -10,15 +10,16 @@ from __future__ import annotations
 import pytest
 
 from api.battle.damage import (
-    FIRST_STRIKE_BONUS,
     LEVEL,
     LEVEL_TERM,
-    TURN_COST,
+    OVERKILL_CAP,
     DamageResult,
     damage_fraction,
     hp_at_level_50,
     matchup_score,
     stat_at_level_50,
+    turn_margin,
+    verdict,
 )
 
 
@@ -256,12 +257,19 @@ class TestMatchupScore:
     def test_bounded(self) -> None:
         assert 0 <= matchup_score(0.5, 0.5, False) <= 1
 
-    def test_strictly_increasing_in_outgoing(self) -> None:
+    def test_increasing_in_outgoing(self) -> None:
         previous = -1.0
-        for outgoing in [0.1, 0.2, 0.4, 0.8, 1.6]:
+        for outgoing in [0.1, 0.2, 0.4, 0.8, 1.1]:
             value = matchup_score(outgoing, 0.5, False)
             assert value > previous
             previous = value
+
+    def test_overkill_is_capped(self) -> None:
+        """355% of a health bar is not three times better than 120%. Both are a
+        one-turn knockout, and left uncapped the strongest picks compress into a
+        narrow band where the ranking stops discriminating."""
+        assert matchup_score(1.3, 0.3, False) == matchup_score(3.6, 0.3, False)
+        assert OVERKILL_CAP < 1.3
 
     def test_strictly_decreasing_in_incoming(self) -> None:
         previous = 2.0
@@ -272,16 +280,20 @@ class TestMatchupScore:
 
     def test_moving_first_is_rewarded(self) -> None:
         assert matchup_score(0.5, 0.5, True) > matchup_score(0.5, 0.5, False)
-        assert FIRST_STRIKE_BONUS > 0
+
+    def test_outspeeding_a_one_shot_takes_nothing(self) -> None:
+        """The case the symmetric formula got wrong: a pick that outspeeds and
+        knocks the enemy out in one turn was still charged for damage it never
+        takes, so exactly the picks doing best were penalised."""
+        assert matchup_score(1.5, 2.0, True) == pytest.approx(matchup_score(1.5, 0.0, True))
 
     def test_a_candidate_that_cannot_damage_scores_zero(self) -> None:
         assert matchup_score(0.0, 0.5, True) == 0.0
 
     def test_taking_nothing_back_approaches_one(self) -> None:
-        """Approaches, not reaches: an unopposed matchup still costs turns, so a
-        faster win outscores a slower one instead of tying at exactly 1."""
-        assert 0.9 < matchup_score(5.0, 0.0, False) < 1.0
-        assert matchup_score(5.0, 0.0, False) > matchup_score(0.5, 0.0, False)
+        """Approaches, not reaches: a matchup still costs turns."""
+        assert 0.9 < matchup_score(1.2, 0.0, False) < 1.0
+        assert matchup_score(1.2, 0.0, False) > matchup_score(0.3, 0.0, False)
 
     def test_dealing_less_than_it_takes_scores_below_half(self) -> None:
         """0.6 out against 1.2 in is not a counter, it is a casualty -- the
@@ -290,41 +302,117 @@ class TestMatchupScore:
 
 
 class TestMonotonicity:
-    """The property the selection algorithm depends on. If score() were not
-    monotonic in outgoing damage, marginal gain would reward the wrong
-    candidate and the whole loop above it would be sound but useless."""
+    """The properties selection depends on. If score() were not monotonic in
+    outgoing damage, marginal gain would reward the wrong candidate and the
+    whole loop above it would be sound but useless."""
 
     @pytest.mark.parametrize("incoming", [0.0, 0.1, 0.5, 1.0, 2.0])
     @pytest.mark.parametrize("moves_first", [True, False])
-    def test_strictly_increasing_in_outgoing(self, incoming: float, moves_first: bool) -> None:
+    def test_never_decreasing_in_outgoing(self, incoming: float, moves_first: bool) -> None:
+        """Non-decreasing rather than strictly increasing: the overkill cap
+        flattens the top deliberately, and crossing a turn threshold can only
+        help."""
         scores = [
             matchup_score(out, incoming, moves_first)
             for out in [0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0]
         ]
+        assert all(later >= earlier for earlier, later in zip(scores, scores[1:], strict=False))
+
+    @pytest.mark.parametrize("incoming", [0.1, 0.5, 1.0])
+    def test_strictly_increasing_below_the_cap(self, incoming: float) -> None:
+        scores = [matchup_score(out, incoming, False) for out in [0.05, 0.1, 0.2, 0.4, 0.8, 1.0]]
         assert all(later > earlier for earlier, later in zip(scores, scores[1:], strict=False))
 
-    @pytest.mark.parametrize("outgoing", [0.1, 0.5, 1.0, 2.0])
+    @pytest.mark.parametrize("outgoing", [0.1, 0.3, 0.5])
     @pytest.mark.parametrize("moves_first", [True, False])
-    def test_strictly_decreasing_in_incoming(self, outgoing: float, moves_first: bool) -> None:
+    def test_never_increasing_in_incoming(self, outgoing: float, moves_first: bool) -> None:
         scores = [
             matchup_score(outgoing, inc, moves_first)
             for inc in [0.0, 0.05, 0.1, 0.3, 0.6, 1.0, 2.0, 4.0]
         ]
-        assert all(later < earlier for earlier, later in zip(scores, scores[1:], strict=False))
+        assert all(later <= earlier for earlier, later in zip(scores, scores[1:], strict=False))
+
+    def test_incoming_stops_mattering_when_it_never_lands(self) -> None:
+        """Outspeeding a one-shot means they never act, so how hard they hit is
+        irrelevant. This is the fix, not a flaw: the old symmetric formula
+        penalised exactly the picks that were winning cleanest."""
+        assert matchup_score(1.5, 0.1, True) == matchup_score(1.5, 9.9, True)
 
     @pytest.mark.parametrize("outgoing", [0.1, 0.5, 1.0, 2.0])
     @pytest.mark.parametrize("incoming", [0.1, 0.5, 1.0, 2.0])
     def test_moving_first_never_hurts(self, outgoing: float, incoming: float) -> None:
         assert matchup_score(outgoing, incoming, True) >= matchup_score(outgoing, incoming, False)
 
-    def test_the_turn_cost_is_what_makes_it_strict(self) -> None:
-        """Without it, every matchup taking zero damage scores exactly 1.0 and
-        a one-turn knockout is indistinguishable from a ten-turn one."""
-        assert TURN_COST > 0
-        assert matchup_score(2.0, 0.0, False) > matchup_score(1.0, 0.0, False)
-
     def test_stays_bounded_across_extremes(self) -> None:
         for outgoing in [0.001, 1.0, 50.0]:
             for incoming in [0.0, 1.0, 50.0]:
                 value = matchup_score(outgoing, incoming, True)
                 assert 0.0 <= value <= 1.0
+
+
+class TestTurnMargin:
+    """The number a person reads. +3 says they need three more turns than we
+    do; 0.84 says nothing."""
+
+    def test_a_clean_outspeed_one_shot(self) -> None:
+        # We KO in 1, they need 3, and we move first: two turns to spare.
+        assert turn_margin(1.5, 0.4, True) == 2
+
+    def test_being_slower_costs_a_turn(self) -> None:
+        assert turn_margin(1.5, 0.4, False) == 1
+
+    def test_outspeeding_wins_a_tie(self) -> None:
+        """Both need one turn. Moving first, we knock them out before they act,
+        so this is a win with nothing to spare -- not a loss."""
+        assert turn_margin(1.5, 1.5, True) == 0
+
+    def test_being_slower_loses_a_tie(self) -> None:
+        assert turn_margin(1.5, 1.5, False) == -1
+
+    def test_negative_when_we_lose_the_exchange(self) -> None:
+        margin = turn_margin(0.2, 1.5, False)
+        assert margin is not None and margin < 0
+
+    def test_is_an_integer(self) -> None:
+        value = turn_margin(0.37, 0.21, True)
+        assert isinstance(value, int)
+
+    def test_undefined_when_we_cannot_ko(self) -> None:
+        """Not a huge number: the caller renders this as "Can't KO"."""
+        assert turn_margin(0.0, 0.5, False) is None
+
+    def test_undefined_when_they_cannot_ko(self) -> None:
+        assert turn_margin(0.5, 0.0, False) is None
+
+
+class TestVerdict:
+    @pytest.mark.parametrize(
+        ("margin", "expected"),
+        [
+            (5, "Dominates"),
+            (3, "Dominates"),
+            (2, "Wins"),
+            (1, "Wins"),
+            (0, "Trades"),
+            (-1, "Loses"),
+        ],
+    )
+    def test_thresholds(self, margin: int, expected: str) -> None:
+        assert verdict(margin, can_ko=True, can_be_koed=True) == expected
+
+    def test_cannot_be_koed_dominates(self) -> None:
+        assert verdict(None, can_ko=True, can_be_koed=False) == "Dominates"
+
+    def test_cannot_ko_loses(self) -> None:
+        assert verdict(None, can_ko=False, can_be_koed=True) == "Loses"
+
+    def test_sign_matches_the_verdict(self) -> None:
+        """The badge and the number must never disagree."""
+        for margin in range(-5, 6):
+            word = verdict(margin, can_ko=True, can_be_koed=True)
+            if margin > 0:
+                assert word in {"Wins", "Dominates"}
+            elif margin == 0:
+                assert word == "Trades"
+            else:
+                assert word == "Loses"
