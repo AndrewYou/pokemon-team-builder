@@ -346,6 +346,12 @@ defense = 1 / worst multiplier the enemy's types land back
 score   = offense * defense
 ```
 
+A result describes the roster it was generated for. When the roster changes the
+previous answers are collapsed behind an explanation naming both counts, not
+merely dimmed: six answers left on screen for a team of one read as the current
+answer however faint they are, and the count is the very thing that changed.
+They stay one click away under "Show previous".
+
 The counter team is **the same size as the team it answers**: three Pokemon in,
 three out. The count is derived from the request rather than configured, so
 there is no way to ask for a mismatch, and `select_team` takes a required size

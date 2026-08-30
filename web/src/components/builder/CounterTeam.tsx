@@ -68,8 +68,10 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
   // changes the picks are answering a team that no longer exists, so they are
   // dimmed rather than silently presented as current.
   const [generatedFor, setGeneratedFor] = useState<string | null>(null)
+  const [showStale, setShowStale] = useState(false)
   const signature = ids.join(',')
   const stale = counter.data != null && generatedFor !== null && generatedFor !== signature
+  const staleSize = generatedFor ? generatedFor.split(',').filter(Boolean).length : 0
 
   // A team emptied entirely has nothing to be stale about.
   const reset = useRef(counter.reset)
@@ -82,6 +84,7 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
   }, [empty])
 
   function generate() {
+    setShowStale(false)
     counter.mutate(ids, { onSuccess: () => setGeneratedFor(signature) })
   }
 
@@ -124,37 +127,63 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
           ))}
         </ul>
       ) : counter.data ? (
-        <div className={cn('flex flex-col gap-2', stale && 'opacity-50')}>
+        <div className="flex flex-col gap-2">
           {stale ? (
-            <button
-              type="button"
-              onClick={generate}
-              className="border-border hover:bg-muted flex items-center gap-2 rounded-[8px] border border-dashed px-2 py-1.5 text-left text-[11px]"
-            >
-              <span className="flex-1">Team changed — these answer the previous roster.</span>
-              <span className="font-medium">Regenerate</span>
-            </button>
+            // Collapsed rather than merely dimmed. Six answers left on screen
+            // for a team of one read as the current answer no matter how faint
+            // they are, and the count is the very thing that changed.
+            <div className="card-surface flex flex-col gap-2 p-3">
+              <p className="text-xs">
+                Your team changed since these were generated.
+              </p>
+              <p className="text-muted-foreground text-[11px]">
+                {staleSize} answer{staleSize === 1 ? '' : 's'} for your previous team; your
+                team now has {ids.length}.
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={generate}
+                  className="border-border bg-card hover:bg-muted h-7 rounded-[8px] border px-2.5 text-[11px] font-medium"
+                >
+                  Regenerate ({ids.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowStale((value) => !value)}
+                  className="text-muted-foreground hover:text-foreground text-[11px]"
+                >
+                  {showStale ? 'Hide previous' : 'Show previous'}
+                </button>
+              </div>
+            </div>
           ) : null}
-          <ul className="flex flex-col gap-2">
-            {/* However many came back. No fixed grid, no padding to six. */}
-            {counter.data.picks.map((pick) => (
-              <PickCard key={pick.id} pick={pick} />
-            ))}
-          </ul>
-          <div className="card-surface p-3">
-            <h3 className="text-muted-foreground mb-2 text-[11px] font-medium">Coverage</h3>
-            <ul className="flex flex-col gap-1">
-              {counter.data.coverage.map((entry) => (
-                <li key={entry.enemy_id} className="flex items-center gap-2 text-[11px]">
-                  <DisplayName name={entry.enemy_name} className="w-24 shrink-0 truncate" />
-                  <span className="text-muted-foreground flex-1 truncate">
-                    best answer <DisplayName name={entry.best_answer} className="text-foreground" />
-                  </span>
-                  <MultiplierBadge value={entry.score} />
-                </li>
-              ))}
-            </ul>
-          </div>
+
+          {/* Nothing is thrown away: the previous answers are one click back. */}
+          {!stale || showStale ? (
+            <div className={cn('flex flex-col gap-2', stale && 'opacity-50')}>
+              <ul className="flex flex-col gap-2">
+                {counter.data.picks.map((pick) => (
+                  <PickCard key={pick.id} pick={pick} />
+                ))}
+              </ul>
+              <div className="card-surface p-3">
+                <h3 className="text-muted-foreground mb-2 text-[11px] font-medium">Coverage</h3>
+                <ul className="flex flex-col gap-1">
+                  {counter.data.coverage.map((entry) => (
+                    <li key={entry.enemy_id} className="flex items-center gap-2 text-[11px]">
+                      <DisplayName name={entry.enemy_name} className="w-24 shrink-0 truncate" />
+                      <span className="text-muted-foreground flex-1 truncate">
+                        best answer{' '}
+                        <DisplayName name={entry.best_answer} className="text-foreground" />
+                      </span>
+                      <MultiplierBadge value={entry.score} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : (
         <EmptyState
