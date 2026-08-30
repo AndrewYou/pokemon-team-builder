@@ -734,16 +734,31 @@ class CounterAnswer(BaseModel):
     )
     their_turns: int | None = Field(
         default=None,
-        description="Turns they need to KO us, after the one they lose to our speed. "
-        "Null when they never can.",
+        description="Turns they need to KO us at their raw per-turn damage, with no "
+        "speed adjustment. Null when they never can.",
     )
     margin: int | None = Field(
         default=None,
-        description="their_turns minus our_turns. Positive means we win the 1v1 with "
-        "that many turns to spare. Null when either side can never KO the other.",
+        description="their_turns minus the number of turns they actually get to act. "
+        "Positive means we win the 1v1 with that many attacks to spare. Null when "
+        "either side can never KO the other.",
     )
     verdict: str = Field(
         default="", description="Dominates, Wins, Trades, or Loses, from the margin."
+    )
+    qualifier: str | None = Field(
+        default=None,
+        description="What else decides the matchup -- 'outsped', 'takes 74% first', "
+        "'survives 3 hits'. Null when nothing needs saying, which is the common case "
+        "for a dominant pick.",
+    )
+    incoming_fraction: float = Field(
+        default=0.0, description="Share of OUR health the enemy removes per turn, raw."
+    )
+    enemy_turns: int = Field(
+        default=0,
+        description="How many times the enemy actually attacks. Zero when we "
+        "outspeed and KO in one.",
     )
 
     model_config = ConfigDict(
@@ -752,7 +767,7 @@ class CounterAnswer(BaseModel):
                 "enemy_id": 6,
                 "enemy_name": "charizard",
                 "multiplier": 0.79,
-                "rationale": "stone-edge (rock) takes 96% per turn, 2 to KO; takes 25% back",
+                "rationale": "Stone Edge (Rock) KOs in 2",
                 "move_name": "stone-edge",
                 "damage_class": "physical",
                 "damage_fraction": 0.96,
@@ -762,6 +777,9 @@ class CounterAnswer(BaseModel):
                 "their_turns": 5,
                 "margin": 3,
                 "verdict": "Dominates",
+                "qualifier": "survives 5 hits",
+                "incoming_fraction": 0.25,
+                "enemy_turns": 2,
             }
         }
     )
@@ -809,6 +827,14 @@ class CoverageEntry(BaseModel):
     best_answer: str = Field(description="Name of the pick that answers this enemy best.")
     best_answer_id: int
     score: float
+    enemy_sprite_url: str | None = Field(
+        default=None, description="So the coverage strip can draw the enemy."
+    )
+    best_verdict: str = Field(
+        default="",
+        description="The verdict of that best answer. A Trades or Loses here is an "
+        "unanswered threat, which is the most useful thing this response carries.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={

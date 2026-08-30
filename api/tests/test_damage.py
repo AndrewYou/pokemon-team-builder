@@ -15,10 +15,12 @@ from api.battle.damage import (
     OVERKILL_CAP,
     DamageResult,
     damage_fraction,
+    defender_turns,
     hp_at_level_50,
     matchup_score,
     stat_at_level_50,
     turn_margin,
+    turns_to_ko,
     verdict,
 )
 
@@ -351,23 +353,42 @@ class TestMonotonicity:
 
 
 class TestTurnMargin:
-    """The number a person reads. +3 says they need three more turns than we
-    do; 0.84 says nothing."""
+    """The number a person reads. +3 says they run out of attacks three short;
+    0.84 says nothing.
+
+    Margin counts the enemy's ATTACKS, not either side's turns-to-KO, and speed
+    is applied once by removing an attack from them. Adjusting turns-to-KO
+    instead is invisible whenever ceil() has already put both sides at one turn,
+    which is most of the interesting matchups.
+    """
 
     def test_a_clean_outspeed_one_shot(self) -> None:
-        # We KO in 1, they need 3, and we move first: two turns to spare.
-        assert turn_margin(1.5, 0.4, True) == 2
+        # We KO in 1 and move first, so they never attack. They needed 3.
+        assert turn_margin(1.5, 0.4, True) == 3
 
-    def test_being_slower_costs_a_turn(self) -> None:
-        assert turn_margin(1.5, 0.4, False) == 1
+    def test_being_slower_gives_them_the_attack_back(self) -> None:
+        assert turn_margin(1.5, 0.4, False) == 2
 
-    def test_outspeeding_wins_a_tie(self) -> None:
-        """Both need one turn. Moving first, we knock them out before they act,
-        so this is a win with nothing to spare -- not a loss."""
-        assert turn_margin(1.5, 1.5, True) == 0
+    def test_outspeeding_a_mutual_one_shot_is_a_win(self) -> None:
+        """Both sides KO in one turn. Moving first, they never act at all.
 
-    def test_being_slower_loses_a_tie(self) -> None:
-        assert turn_margin(1.5, 1.5, False) == -1
+        This is the case the old formula got wrong: ceil() collapses both sides
+        to a single turn, so subtracting a turn from their KO count produced 0
+        -- "Trades" -- for the single most dominant outcome in the game.
+        """
+        assert turn_margin(1.5, 1.5, True) == 1
+
+    def test_being_slower_in_a_mutual_one_shot_is_not_a_win(self) -> None:
+        """They land exactly the one attack they need, before we act."""
+        assert turn_margin(1.5, 1.5, False) == 0
+
+    def test_speed_is_worth_exactly_one_attack(self) -> None:
+        """Never two, and never zero. The whole bug was applying it twice over."""
+        for outgoing in (0.3, 0.51, 1.0, 1.5, 3.3):
+            fast = turn_margin(outgoing, 0.4, True)
+            slow = turn_margin(outgoing, 0.4, False)
+            assert fast is not None and slow is not None
+            assert fast - slow == 1
 
     def test_negative_when_we_lose_the_exchange(self) -> None:
         margin = turn_margin(0.2, 1.5, False)
@@ -382,7 +403,20 @@ class TestTurnMargin:
         assert turn_margin(0.0, 0.5, False) is None
 
     def test_undefined_when_they_cannot_ko(self) -> None:
+        """Immunity. their_turns is infinite, so the margin is unbounded and
+        the caller says "Never KOs us" rather than printing a number."""
         assert turn_margin(0.5, 0.0, False) is None
+
+    def test_margin_agrees_with_the_scorer_about_who_acted(self) -> None:
+        """Margin and score both read `defender_turns`, so they cannot drift."""
+        for outgoing in (0.3, 0.6, 1.2, 2.0):
+            for moves_first in (True, False):
+                ours = turns_to_ko(outgoing)
+                assert ours is not None
+                acted = defender_turns(ours, moves_first)
+                theirs = turns_to_ko(0.35)
+                assert theirs is not None
+                assert turn_margin(outgoing, 0.35, moves_first) == theirs - acted
 
 
 class TestVerdict:
@@ -405,6 +439,20 @@ class TestVerdict:
 
     def test_cannot_ko_loses(self) -> None:
         assert verdict(None, can_ko=False, can_be_koed=True) == "Loses"
+
+    def test_untouched_dominates_however_narrow_the_margin(self) -> None:
+        """Taking zero damage is domination even at +1.
+
+        Against something that would also KO in one turn, the best possible
+        outcome scores +1 on the margin -- the same as a scrappy win -- because
+        ceil() cannot represent anything finer. The enemy landing no attacks at
+        all is the distinction the number cannot carry.
+        """
+        assert verdict(1, can_ko=True, can_be_koed=True, untouched=True) == "Dominates"
+        assert verdict(1, can_ko=True, can_be_koed=True) == "Wins"
+
+    def test_untouched_does_not_rescue_a_pick_that_cannot_ko(self) -> None:
+        assert verdict(None, can_ko=False, can_be_koed=True, untouched=True) == "Loses"
 
     def test_sign_matches_the_verdict(self) -> None:
         """The badge and the number must never disagree."""

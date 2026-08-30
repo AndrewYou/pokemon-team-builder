@@ -159,15 +159,19 @@ def matchup_score(outgoing: float, incoming: float, moves_first: bool) -> float:
 def turn_margin(outgoing: float, incoming: float, moves_first: bool) -> int | None:
     """Turns to spare we win the 1v1 by. None when the question is undefined.
 
-    A signed integer a person can read at a glance: +3 says they would need
-    three more turns to knock us out than we need for them. The 0-1 score sorts
-    well and communicates nothing.
+    A signed integer a person can read at a glance: +3 says they get three
+    fewer attacks than they need. The 0-1 score sorts well and communicates
+    nothing.
 
-    The speed adjustment costs a turn when we are SLOWER, not when we are
-    faster. Both sides act on every round; speed only decides who resolves
-    first within it, so the slower Pokemon loses a tie. Subtracting the turn
-    from the faster side instead reports a pick that knocks the enemy out
-    before it ever moves as losing by one.
+    Speed is applied exactly once, and to their *action count* rather than to
+    either side's turns-to-KO -- `defender_turns` is the same function the
+    scorer uses, so the margin and the score cannot disagree about who got to
+    move. Adjusting turns-to-KO instead reports a pick that knocks the enemy
+    out before it ever acts as a draw, because ceil() has already collapsed
+    both sides to one turn and there is nothing left for the adjustment to
+    show up in.
+
+    Positive means we win: they run out of attacks with `margin` to spare.
     """
     ours = turns_to_ko(outgoing)
     theirs = turns_to_ko(incoming)
@@ -176,14 +180,27 @@ def turn_margin(outgoing: float, incoming: float, moves_first: bool) -> int | No
         # meaning. The caller renders these as "Can't KO" or "Never KOs us"
         # rather than as a very large number.
         return None
-    return theirs - ours - (0 if moves_first else 1)
+    return theirs - defender_turns(ours, moves_first)
 
 
-def verdict(margin: int | None, can_ko: bool, can_be_koed: bool) -> str:
-    """A word for the matchup, thresholds shared with the UI."""
+def verdict(
+    margin: int | None,
+    can_ko: bool,
+    can_be_koed: bool,
+    *,
+    untouched: bool = False,
+) -> str:
+    """A word for the matchup, thresholds shared with the UI.
+
+    `untouched` means the enemy never lands a single attack -- we outspeed and
+    knock it out in one turn. Margin cannot express that on its own: against
+    anything that would also KO in one turn, ceil() puts both sides at one and
+    the best possible outcome in the game reads as +1, the same as a scrappy
+    win. Taking zero damage is domination however narrow the turn count looks.
+    """
     if not can_ko:
         return "Loses"
-    if not can_be_koed:
+    if not can_be_koed or untouched:
         return "Dominates"
     if margin is None:
         return "Trades"

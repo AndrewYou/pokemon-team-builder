@@ -999,12 +999,15 @@ export interface components {
          *       "damage_fraction": 0.96,
          *       "enemy_id": 6,
          *       "enemy_name": "charizard",
+         *       "enemy_turns": 2,
+         *       "incoming_fraction": 0.25,
          *       "margin": 3,
          *       "move_name": "stone-edge",
          *       "multiplier": 0.79,
          *       "our_turns": 2,
          *       "outspeeds": false,
-         *       "rationale": "stone-edge (rock) takes 96% per turn, 2 to KO; takes 25% back",
+         *       "qualifier": "survives 5 hits",
+         *       "rationale": "Stone Edge (Rock) KOs in 2",
          *       "their_turns": 5,
          *       "turns_to_ko": 2,
          *       "verdict": "Dominates"
@@ -1062,12 +1065,12 @@ export interface components {
             our_turns?: number | null;
             /**
              * Their Turns
-             * @description Turns they need to KO us, after the one they lose to our speed. Null when they never can.
+             * @description Turns they need to KO us at their raw per-turn damage, with no speed adjustment. Null when they never can.
              */
             their_turns?: number | null;
             /**
              * Margin
-             * @description their_turns minus our_turns. Positive means we win the 1v1 with that many turns to spare. Null when either side can never KO the other.
+             * @description their_turns minus the number of turns they actually get to act. Positive means we win the 1v1 with that many attacks to spare. Null when either side can never KO the other.
              */
             margin?: number | null;
             /**
@@ -1076,6 +1079,23 @@ export interface components {
              * @default
              */
             verdict: string;
+            /**
+             * Qualifier
+             * @description What else decides the matchup -- 'outsped', 'takes 74% first', 'survives 3 hits'. Null when nothing needs saying, which is the common case for a dominant pick.
+             */
+            qualifier?: string | null;
+            /**
+             * Incoming Fraction
+             * @description Share of OUR health the enemy removes per turn, raw.
+             * @default 0
+             */
+            incoming_fraction: number;
+            /**
+             * Enemy Turns
+             * @description How many times the enemy actually attacks. Zero when we outspeed and KO in one.
+             * @default 0
+             */
+            enemy_turns: number;
         };
         /**
          * CounterPick
@@ -1192,6 +1212,17 @@ export interface components {
             best_answer_id: number;
             /** Score */
             score: number;
+            /**
+             * Enemy Sprite Url
+             * @description So the coverage strip can draw the enemy.
+             */
+            enemy_sprite_url?: string | null;
+            /**
+             * Best Verdict
+             * @description The verdict of that best answer. A Trades or Loses here is an unanswered threat, which is the most useful thing this response carries.
+             * @default
+             */
+            best_verdict: string;
         };
         /**
          * DataQuality

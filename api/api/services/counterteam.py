@@ -77,6 +77,9 @@ def build_counter_team(cache: DerivedCache, enemy_ids: list[int]) -> CounterTeam
                     their_turns=matchup.their_turns,
                     margin=matchup.margin,
                     verdict=matchup.verdict,
+                    qualifier=scoring.qualifier(matchup),
+                    incoming_fraction=round(matchup.incoming, 4),
+                    enemy_turns=matchup.enemy_turns,
                     outspeeds=matchup.outspeeds,
                 )
             )
@@ -96,13 +99,19 @@ def build_counter_team(cache: DerivedCache, enemy_ids: list[int]) -> CounterTeam
         best_row = max(chosen_rows, key=lambda r: scores[r, column]) if chosen_rows else None
         if best_row is None:
             continue
+        # Recomputed rather than carried over from the answers loop: coverage is
+        # about this one pairing, and the verdict has to come from the same
+        # matchup the score did or the strip and the table can disagree.
+        best = scoring.score(cache, best_row, enemy_row)
         coverage.append(
             CoverageEntry(
                 enemy_id=enemy_meta.id,
                 enemy_name=enemy_meta.name,
+                enemy_sprite_url=enemy_meta.sprite_url,
                 best_answer=cache.meta[best_row].name,
                 best_answer_id=cache.meta[best_row].id,
                 score=round(float(scores[best_row, column]), 4),
+                best_verdict=best.verdict,
             )
         )
 

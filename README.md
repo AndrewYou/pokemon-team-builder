@@ -444,22 +444,77 @@ effective* when it is in fact a strong result on a higher-is-better scale.
 So the table shows turn margin instead:
 
 ```
-margin = their_turns_to_ko - our_turns_to_ko - (0 if we move first else 1)
+margin = their_turns_to_ko - the number of turns they actually get to act
+       = their_turns_to_ko - defender_turns(our_turns, we_move_first)
 ```
 
-Turns to spare, as a signed integer. `+3` means they would need three more turns
-to knock us out than we need to knock them out. The margin drives a verdict --
-**Dominates** at +3, **Wins** at +1, **Trades** at 0, **Loses** below -- coloured
-by outcome and never by type, because the colour is saying something about the
-fight rather than about the Pokemon.
+Attacks to spare, as a signed integer: `+3` says they run three attacks short of
+what they need. Positive means we win.
 
-The subtraction is not symmetric, and that is the point: whoever moves second
-loses the tie. Without it a pick that knocks out in one turn while moving first
-came back as `-1`, reported as "Loses", against an opponent that also needs one
-turn. It wins that exchange outright.
+**Speed is applied exactly once, and to their action count.** The margin calls
+the same `defender_turns` the scorer does, so the two cannot disagree about who
+got to move. The earlier version adjusted a turns-to-KO figure instead, and that
+adjustment is invisible in the case that matters most: `ceil()` has already put
+both sides at one turn, so a pick that knocks the enemy out before it ever acts
+came back as `0` -- "Trades" -- for the single most dominant outcome in the game.
+Blacephalon one-shotting Steelix at 331% while outspeeding was reported as a
+draw.
+
+`Dominates` therefore has two ways in: a margin of +3, or the enemy landing no
+attack at all. Against something that would also KO in one turn, taking zero
+damage still only scores `+1`, because `ceil()` cannot represent anything finer.
+Being untouched is the distinction the number cannot carry, so the verdict
+carries it.
+
+**Trades** is exactly zero: they land the last attack they needed on the same
+exchange we would have won. With average damage rolls that is a knife edge, and
+it is the honest word for it.
 
 The score stays in the API response and remains the sort key. It is simply not
 what a person reads.
+
+### What a matchup line says
+
+The old wording -- "Mind Blown (Fire) — deals 331% per turn, KOs in 1; moves
+first, takes 0% back" -- said three things and carried one. "331% per turn" is
+noise once you know it is a one-shot, and "moves first" appeared on nearly every
+row, which makes it decoration.
+
+So the line is a headline plus an optional qualifier:
+
+```
+Mind Blown (Fire) KOs in 1
+Eternabeam (Dragon) KOs in 2   — survives 3 hits
+Bolt Strike (Electric) KOs in 1 — takes 53% first
+```
+
+Each clause has to earn its place. `outsped` appears only where moving first is
+what wins the exchange -- not merely where we happen to be faster -- which takes
+it from every row to about one in ten. Damage appears only where any is actually
+taken. A dominant pick shows the headline and nothing else, and that silence is
+itself the signal. The exact percentages are on the row's tooltip.
+
+The rule generalises: a phrase that appears on every row is not carrying
+information.
+
+### Coverage is about gaps
+
+The coverage panel used to list "best answer Blacephalon" once per enemy: true,
+and useless -- one pick dominating all six *is* the best answer to each. It is
+now a strip of enemy chips coloured by their own best verdict, with anything
+short of a win named above it.
+
+Worth stating plainly: with no tier restrictions, that warning almost never
+fires. There is nearly always a legendary that dominates every enemy, so the
+strip reads "every threat answered" for most teams. The gap path is built and
+correct; it becomes load-bearing the moment a tier filter narrows the candidate
+pool.
+
+Picks are collapsed by default to one row each -- sprite, name, typing, and one
+verdict-coloured dot per enemy. Six green dots reads "handles everything" and
+five green with one red reads "one gap", neither of which needs expanding. The
+detail table is one click away, several can be open at once, and expansion state
+resets when a new counter team is generated.
 
 ### Declared simplifications
 

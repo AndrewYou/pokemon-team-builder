@@ -1,6 +1,7 @@
+import { ChevronDown } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-import type { CounterAnswer, CounterPick, TeamMember } from '@/api/client'
+import type { CounterAnswer, CounterPick, CoverageEntry, TeamMember } from '@/api/client'
 import { useCounterTeam } from '@/api/queries'
 import { cn } from '@/lib/utils'
 
@@ -12,26 +13,36 @@ import {
   Sprite,
   TypeBadges,
   VerdictBadge,
+  VerdictDots,
+  verdictTone,
 } from './primitives'
 import { InfoTip } from './InfoTip'
 
 const MARGIN_HELP =
-  'How many turns to spare we win the 1v1 by. +3 means they would need three ' +
-  'more turns to knock us out than we need to knock them out, counting who ' +
-  'moves first. Higher is better; negative means we lose the exchange.'
+  'How many attacks the enemy runs short by. +3 means they need three more ' +
+  'turns to knock us out than they actually get, counting the one they lose ' +
+  'when we move first. Higher is better; negative means we lose the exchange.'
 
 const VERDICT_HELP = (
   <>
-    <strong>Dominates</strong> +3 or more · <strong>Wins</strong> +1 to +2 · <strong>Trades</strong>{' '}
-    0 · <strong>Loses</strong> below 0
+    <strong>Dominates</strong> +3, or they never land a hit · <strong>Wins</strong> +1 to +2 ·{' '}
+    <strong>Trades</strong> 0 · <strong>Loses</strong> below 0
   </>
 )
 
+/** The percentages, kept off the scan path and available on demand. */
+function detail(answer: CounterAnswer): string {
+  const dealt = `deals ${Math.round(answer.damage_fraction * 100)}% per turn`
+  const taken =
+    answer.enemy_turns === 0
+      ? 'takes nothing back'
+      : `takes ${Math.round(answer.incoming_fraction * 100)}% per turn, over ${answer.enemy_turns} ` +
+        `turn${answer.enemy_turns === 1 ? '' : 's'}`
+  return `${dealt}; ${taken}`
+}
+
 /**
  * One pick's reasoning, as a small table.
- *
- * The reasoning is the differentiator, so it is inline rather than behind a
- * tooltip.
  *
  * The 0-1 score is a good sort key and a poor thing to read, so it stays in the
  * API response and out of this table. Turn margin is what a person can act on.
@@ -79,8 +90,12 @@ function AnswerTable({ answers }: { answers: CounterAnswer[] }) {
                   theirTurns={answer.their_turns}
                 />
               </td>
-              <td className="text-muted-foreground hidden py-1 sm:table-cell">
-                {answer.rationale}
+              {/* The percentages live in the title, not on the scan path. */}
+              <td className="hidden py-1 sm:table-cell" title={detail(answer)}>
+                <span className="text-foreground/80">{answer.rationale}</span>
+                {answer.qualifier ? (
+                  <span className="text-muted-foreground"> — {answer.qualifier}</span>
+                ) : null}
               </td>
             </tr>
           ))}
@@ -89,41 +104,133 @@ function AnswerTable({ answers }: { answers: CounterAnswer[] }) {
   )
 }
 
-function PickCard({ pick }: { pick: CounterPick }) {
-  const primary = pick.types[0]
+/**
+ * Coverage as a strip of enemies rather than a list of picks.
+ *
+ * The old panel said "best answer Blacephalon" six times: true, and useless.
+ * Coverage exists to show GAPS, so each enemy carries its own best verdict and
+ * anything short of a win is called out above the strip.
+ */
+function CoverageStrip({
+  coverage,
+  onFocusPick,
+}: {
+  coverage: CoverageEntry[]
+  onFocusPick: (pickId: number) => void
+}) {
+  const gaps = coverage.filter(
+    (entry) => entry.best_verdict === 'Loses' || entry.best_verdict === 'Trades',
+  )
+
   return (
-    <li data-type={primary} className="card-surface relative flex flex-col gap-2 p-3">
+    <div className="card-surface flex flex-col gap-2 p-3">
+      <div className="flex items-baseline gap-2">
+        <h3 className="text-muted-foreground text-[11px] font-medium">Coverage</h3>
+        {gaps.length ? (
+          <p className="text-[11px] text-amber-400">
+            {gaps.length} unanswered:{' '}
+            <span className="capitalize">
+              {gaps.map((entry) => entry.enemy_name.replace(/-/g, ' ')).join(', ')}
+            </span>
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-[11px]">every threat answered</p>
+        )}
+      </div>
+      <ul className="flex flex-wrap gap-1">
+        {coverage.map((entry) => (
+          <li key={entry.enemy_id}>
+            <button
+              type="button"
+              onClick={() => onFocusPick(entry.best_answer_id)}
+              title={`${entry.enemy_name}: ${entry.best_verdict} — best answer ${entry.best_answer}`}
+              className={cn(
+                'flex h-6 items-center gap-1 rounded-full border pr-1.5 pl-0.5',
+                'focus-visible:ring-ring hover:brightness-125 focus-visible:ring-2 focus-visible:outline-none',
+                verdictTone(entry.best_verdict).chip,
+              )}
+            >
+              <Sprite src={entry.enemy_sprite_url} alt={entry.enemy_name} size="xs" />
+              <DisplayName name={entry.enemy_name} className="text-[10px]" />
+              <VerdictBadge verdict={entry.best_verdict} className="px-1 py-0 text-[9px]" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/**
+ * One pick, collapsed to a single row until asked.
+ *
+ * Six picks with a six-row table each is more than fits on a screen, so the
+ * default is the whole team at a glance and the detail is one click away. Height
+ * is animated with a grid row rather than max-height, so it does not depend on
+ * guessing the content height; the global reduced-motion rule zeroes it.
+ */
+function PickCard({
+  pick,
+  open,
+  onToggle,
+  cardRef,
+}: {
+  pick: CounterPick
+  open: boolean
+  onToggle: () => void
+  cardRef: (node: HTMLLIElement | null) => void
+}) {
+  const primary = pick.types[0]
+  const bodyId = `pick-${pick.id}-detail`
+
+  return (
+    <li ref={cardRef} data-type={primary} className="card-surface relative flex flex-col">
       <span
         aria-hidden
         className="absolute inset-y-3 left-0 w-0.5 rounded-full"
         style={{ background: 'var(--type)' }}
       />
-      <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        className="focus-visible:ring-ring flex items-center gap-3 p-3 text-left focus-visible:ring-2 focus-visible:outline-none"
+      >
         <Sprite src={pick.sprite_url} alt={pick.name} size="sm" type={primary} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <DisplayName
             name={pick.name}
             className="font-display block truncate text-sm font-medium"
           />
-          <TypeBadges types={pick.types} className="mt-1" />
+          <div className="mt-1 flex items-center gap-2">
+            <TypeBadges types={pick.types} />
+            <VerdictDots answers={pick.answers} />
+          </div>
+        </div>
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            'text-muted-foreground size-4 shrink-0 transition-transform duration-200',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+      <div
+        id={bodyId}
+        className={cn(
+          'grid transition-[grid-template-rows] duration-200 ease-out',
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="px-3 pb-3">
+            <AnswerTable answers={pick.answers} />
+          </div>
         </div>
       </div>
-      <AnswerTable answers={pick.answers} />
     </li>
   )
-}
-
-/**
- * The verdict a pick earned against one enemy.
- *
- * Coverage carries the raw score and not the verdict, and the score is exactly
- * what must not be shown here, so it is read back off the pick that produced it.
- */
-function verdictFor(picks: CounterPick[], pickId: number, enemyId: number): string {
-  const answer = picks
-    .find((pick) => pick.id === pickId)
-    ?.answers.find((entry) => entry.enemy_id === enemyId)
-  return answer?.verdict ?? ''
 }
 
 export function CounterTeam({ members }: { members: TeamMember[] }) {
@@ -136,6 +243,35 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
   // dimmed rather than silently presented as current.
   const [generatedFor, setGeneratedFor] = useState<string | null>(null)
   const [showStale, setShowStale] = useState(false)
+
+  // Which picks are open. A set, not a single id: this is not an exclusive
+  // accordion, because comparing two picks means having both on screen.
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
+  const cards = useRef(new Map<number, HTMLLIElement>())
+
+  const registerCard = (id: number) => (node: HTMLLIElement | null) => {
+    if (node) cards.current.set(id, node)
+    else cards.current.delete(id)
+  }
+
+  // A coverage chip names an enemy; the useful destination is the pick that
+  // answers it, opened and in view.
+  function focusPick(pickId: number) {
+    setExpanded((current) => new Set(current).add(pickId))
+    // After the row has been told to open, so the scroll lands on its final
+    // position rather than its collapsed one.
+    requestAnimationFrame(() => {
+      cards.current.get(pickId)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+  }
+
+  function toggle(pickId: number) {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (!next.delete(pickId)) next.add(pickId)
+      return next
+    })
+  }
   const signature = ids.join(',')
   const stale = counter.data != null && generatedFor !== null && generatedFor !== signature
   const staleSize = generatedFor ? generatedFor.split(',').filter(Boolean).length : 0
@@ -152,8 +288,16 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
 
   function generate() {
     setShowStale(false)
+    // A new result is a new set of picks; carrying the old expansion over
+    // would open whichever rows happen to share an index.
+    setExpanded(new Set())
     counter.mutate(ids, { onSuccess: () => setGeneratedFor(signature) })
   }
+
+  const allOpen =
+    counter.data != null &&
+    counter.data.picks.length > 0 &&
+    counter.data.picks.every((pick) => expanded.has(pick.id))
 
   return (
     <section className="flex flex-col gap-3">
@@ -227,32 +371,34 @@ export function CounterTeam({ members }: { members: TeamMember[] }) {
           {/* Nothing is thrown away: the previous answers are one click back. */}
           {!stale || showStale ? (
             <div className={cn('flex flex-col gap-2', stale && 'opacity-50')}>
+              <CoverageStrip coverage={counter.data.coverage} onFocusPick={focusPick} />
+              <div className="flex items-center justify-between">
+                <h3 className="text-muted-foreground text-[11px] font-medium">
+                  {counter.data.picks.length} pick{counter.data.picks.length === 1 ? '' : 's'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpanded(
+                      allOpen ? new Set() : new Set(counter.data!.picks.map((pick) => pick.id)),
+                    )
+                  }
+                  className="text-muted-foreground hover:text-foreground text-[11px]"
+                >
+                  {allOpen ? 'Collapse all' : 'Expand all'}
+                </button>
+              </div>
               <ul className="flex flex-col gap-2">
                 {counter.data.picks.map((pick) => (
-                  <PickCard key={pick.id} pick={pick} />
+                  <PickCard
+                    key={pick.id}
+                    pick={pick}
+                    open={expanded.has(pick.id)}
+                    onToggle={() => toggle(pick.id)}
+                    cardRef={registerCard(pick.id)}
+                  />
                 ))}
               </ul>
-              <div className="card-surface p-3">
-                <h3 className="text-muted-foreground mb-2 text-[11px] font-medium">Coverage</h3>
-                <ul className="flex flex-col gap-1">
-                  {counter.data.coverage.map((entry) => (
-                    <li key={entry.enemy_id} className="flex items-center gap-2 text-[11px]">
-                      <DisplayName name={entry.enemy_name} className="w-24 shrink-0 truncate" />
-                      <span className="text-muted-foreground flex-1 truncate">
-                        best answer{' '}
-                        <DisplayName name={entry.best_answer} className="text-foreground" />
-                      </span>
-                      <VerdictBadge
-                        verdict={verdictFor(
-                          counter.data.picks,
-                          entry.best_answer_id,
-                          entry.enemy_id,
-                        )}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </div>
             </div>
           ) : null}
         </div>

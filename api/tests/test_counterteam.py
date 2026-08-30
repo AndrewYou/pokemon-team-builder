@@ -340,24 +340,48 @@ class TestBuildCounterTeam:
 
 
 class TestRationale:
-    def test_names_the_move_and_what_it_does(self, cache: DerivedCache) -> None:
+    """The headline and the qualifier. Scanned, not studied."""
+
+    def test_names_the_move_and_the_turn_count(self, cache: DerivedCache) -> None:
         matchup = scoring.score(cache, _row(cache, 248), _row(cache, 6))
         text = scoring.rationale(cache, _row(cache, 248), _row(cache, 6), matchup)
         assert "Stone Edge" in text and "(Rock)" in text
-        assert "deals" in text and "KOs in" in text
+        assert "KOs in" in text
 
-    def test_says_who_takes_what(self, cache: DerivedCache) -> None:
-        """The old wording used the same verb for both directions."""
+    def test_leaves_the_percentages_out(self, cache: DerivedCache) -> None:
+        """Percentages are noise once you know it is a one-shot.
+
+        The exact numbers are still in the response for the tooltip; they are
+        not in the line read while scanning six picks.
+        """
         matchup = scoring.score(cache, _row(cache, 248), _row(cache, 6))
         text = scoring.rationale(cache, _row(cache, 248), _row(cache, 6), matchup)
-        assert "deals" in text and "back" in text
+        assert "%" not in text
 
-    def test_an_outspeeding_one_shot_reports_no_damage_taken(self, cache: DerivedCache) -> None:
-        """Reporting the per-turn rate would describe damage never taken."""
+    def test_an_untouched_matchup_has_nothing_to_qualify(self, cache: DerivedCache) -> None:
+        """No damage taken and speed not load-bearing means silence.
+
+        A qualifier on every row is a qualifier carrying no information.
+        """
         matchup = scoring.score(cache, _row(cache, 94), _row(cache, 143))
-        if matchup.outspeeds and matchup.our_turns == 1:
-            text = scoring.rationale(cache, _row(cache, 94), _row(cache, 143), matchup)
-            assert "takes 0% back" in text
+        if matchup.enemy_turns == 0 and not matchup.speed_decides:
+            assert scoring.qualifier(matchup) is None
+
+    def test_outsped_appears_only_when_speed_decides(self, cache: DerivedCache) -> None:
+        """Being faster is not news; winning BECAUSE you are faster is."""
+        for candidate in (248, 94, 6):
+            for enemy in (6, 143, 9):
+                matchup = scoring.score(cache, _row(cache, candidate), _row(cache, enemy))
+                text = scoring.qualifier(matchup) or ""
+                assert ("outsped" in text) == matchup.speed_decides
+
+    def test_reports_damage_only_when_any_is_taken(self, cache: DerivedCache) -> None:
+        for candidate in (248, 94, 6):
+            for enemy in (6, 143, 9):
+                matchup = scoring.score(cache, _row(cache, candidate), _row(cache, enemy))
+                text = scoring.qualifier(matchup) or ""
+                if matchup.enemy_turns == 0:
+                    assert "takes" not in text and "survives" not in text
 
     def test_explains_a_hopeless_matchup(self, chart: dict[str, dict[str, float]]) -> None:
         small = cache_for(chart)

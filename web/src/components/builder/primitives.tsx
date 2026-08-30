@@ -41,14 +41,14 @@ export function Sprite({
 }: {
   src: string | null | undefined
   alt: string
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'xs' | 'sm' | 'md' | 'lg'
   type?: string
 }) {
   // The sprites are natively 96x96. Rendering them at exactly that size means
   // one source pixel per CSS pixel -- no scaling artefacts at all -- and the
   // mount supplies the breathing room instead.
-  const mount = { sm: 'size-12', md: 'h-32 w-full', lg: 'h-36 w-full' }[size]
-  const image = { sm: 'size-10', md: 'size-24', lg: 'size-28' }[size]
+  const mount = { xs: 'size-6', sm: 'size-12', md: 'h-32 w-full', lg: 'h-36 w-full' }[size]
+  const image = { xs: 'size-6', sm: 'size-10', md: 'size-24', lg: 'size-28' }[size]
 
   return (
     <div
@@ -56,13 +56,7 @@ export function Sprite({
       className={cn('type-tint grid shrink-0 place-items-center rounded-[10px]', mount)}
     >
       {src ? (
-        <img
-          src={src}
-          alt={alt}
-          loading="lazy"
-          decoding="async"
-          className={cn('sprite', image)}
-        />
+        <img src={src} alt={alt} loading="lazy" decoding="async" className={cn('sprite', image)} />
       ) : (
         <Silhouette className={image} />
       )}
@@ -98,24 +92,83 @@ export function TypeBadges({ types, className }: { types: string[]; className?: 
 }
 
 /**
- * The verdict for a matchup.
+ * Verdict colours, in one place.
  *
  * Coloured by outcome, never by type: this is analysis, not Pokemon data, and
- * reusing the type palette here would suggest the colour meant something about
- * the Pokemon rather than about the fight.
+ * reusing the type palette would suggest the colour meant something about the
+ * Pokemon rather than about the fight. The badge, the coverage chips and the
+ * summary dots all read from here so they cannot drift apart.
  */
-export function VerdictBadge({ verdict }: { verdict: string }) {
-  const tone =
-    {
-      Dominates: 'text-emerald-400 bg-emerald-400/12',
-      Wins: 'text-emerald-500/90 bg-emerald-500/10',
-      Trades: 'text-amber-400 bg-amber-400/12',
-      Loses: 'text-rose-400/90 bg-rose-400/10',
-    }[verdict] ?? 'text-muted-foreground bg-muted'
+export const VERDICT_TONE: Record<string, { badge: string; dot: string; chip: string }> = {
+  Dominates: {
+    badge: 'text-emerald-400 bg-emerald-400/12',
+    dot: 'bg-emerald-400',
+    chip: 'border-emerald-400/30 bg-emerald-400/8',
+  },
+  Wins: {
+    badge: 'text-emerald-500/90 bg-emerald-500/10',
+    dot: 'bg-emerald-500/70',
+    chip: 'border-emerald-500/25 bg-emerald-500/6',
+  },
+  Trades: {
+    badge: 'text-amber-400 bg-amber-400/12',
+    dot: 'bg-amber-400',
+    chip: 'border-amber-400/40 bg-amber-400/10',
+  },
+  Loses: {
+    badge: 'text-rose-400/90 bg-rose-400/10',
+    dot: 'bg-rose-400',
+    chip: 'border-rose-400/40 bg-rose-400/10',
+  },
+}
 
+const FALLBACK_TONE = {
+  badge: 'text-muted-foreground bg-muted',
+  dot: 'bg-muted-foreground/40',
+  chip: 'border-border bg-card',
+}
+
+export function verdictTone(verdict: string) {
+  return VERDICT_TONE[verdict] ?? FALLBACK_TONE
+}
+
+/** The verdict for a matchup. */
+export function VerdictBadge({ verdict, className }: { verdict: string; className?: string }) {
   return (
-    <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold', tone)}>
+    <span
+      className={cn(
+        'inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold',
+        verdictTone(verdict).badge,
+        className,
+      )}
+    >
       {verdict}
+    </span>
+  )
+}
+
+/**
+ * A pick's whole scorecard as one row of dots, in team order.
+ *
+ * The point of the collapsed row: six green dots reads "handles everything" and
+ * five green with one red reads "one gap", neither of which needs expanding.
+ */
+export function VerdictDots({
+  answers,
+  className,
+}: {
+  answers: { enemy_id: number; enemy_name: string; verdict: string }[]
+  className?: string
+}) {
+  return (
+    <span className={cn('flex items-center gap-1', className)} aria-hidden>
+      {answers.map((answer) => (
+        <span
+          key={answer.enemy_id}
+          title={`${answer.enemy_name}: ${answer.verdict}`}
+          className={cn('size-1.5 rounded-full', verdictTone(answer.verdict).dot)}
+        />
+      ))}
     </span>
   )
 }
@@ -157,10 +210,7 @@ export function MarginCell({
 export function Skeleton({ className }: { className?: string }) {
   return (
     <div
-      className={cn(
-        'bg-muted skeleton-shimmer relative overflow-hidden rounded-md',
-        className,
-      )}
+      className={cn('bg-muted skeleton-shimmer relative overflow-hidden rounded-md', className)}
     />
   )
 }

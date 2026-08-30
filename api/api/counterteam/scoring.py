@@ -20,6 +20,7 @@ from api.battle.damage import (
     OVERKILL_CAP,
     TURN_COST,
     damage_fraction,
+    defender_turns,
     matchup_score,
     turn_margin,
     turns_to_ko,
@@ -69,19 +70,41 @@ class Matchup:
         return turn_margin(self.outgoing, self.incoming, self.outspeeds)
 
     @property
+    def enemy_turns(self) -> int:
+        """How many times the enemy actually gets to attack."""
+        return defender_turns(self.our_turns, self.outspeeds)
+
+    @property
     def verdict(self) -> str:
-        return verdict(self.margin, self.outgoing > 0, self.incoming > 0)
+        return verdict(
+            self.margin,
+            self.outgoing > 0,
+            self.incoming > 0,
+            untouched=self.enemy_turns == 0,
+        )
+
+    @property
+    def speed_decides(self) -> bool:
+        """True when moving first is what makes this a win.
+
+        The test is whether the outcome would change, not whether we happen to
+        be faster: "outsped" on a matchup we win either way is a word on every
+        row carrying no information.
+        """
+        if not self.outspeeds:
+            return False
+        slower = turn_margin(self.outgoing, self.incoming, False)
+        return (self.margin or 0) > 0 and (slower is None or slower <= 0)
 
     @property
     def incoming_over_exchange(self) -> float:
         """Damage we actually take, not the per-turn rate.
 
         Zero when we outspeed and knock them out in one turn, because they
-        never get to attack.
+        never get to attack. Derived: `incoming` itself stays the raw per-turn
+        rate, which is what the margin and the scorer both read.
         """
-        from api.battle.damage import defender_turns
-
-        return self.incoming * defender_turns(self.our_turns, self.outspeeds)
+        return self.incoming * self.enemy_turns
 
 
 def candidate_type_mask(cache: DerivedCache) -> npt.NDArray[np.bool_]:
@@ -325,11 +348,11 @@ def _title(name: str) -> str:
 
 
 def rationale(cache: DerivedCache, candidate_row: int, enemy_row: int, matchup: Matchup) -> str:
-    """Explain a matchup without leaving who-takes-what ambiguous.
+    """The headline for a matchup: what it does, and how fast.
 
-    The old wording -- "takes 355% per turn ... takes 74% back" -- used the same
-    verb for both directions and reported damage the pick never actually takes
-    when it outspeeds and one-shots.
+    Deliberately short. "deals 331% per turn" is noise once you know it is a
+    one-shot, and the exact percentages are a tooltip concern -- this line is
+    read while scanning six picks, not studied.
     """
     candidate = cache.meta[candidate_row]
     enemy = cache.meta[enemy_row]
@@ -338,16 +361,36 @@ def rationale(cache: DerivedCache, candidate_row: int, enemy_row: int, matchup: 
         return f"{_title(candidate.name)} cannot damage {'/'.join(enemy.types)}"
 
     move = f"{_title(matchup.move_name)} ({_title(matchup.move_type)})"
-    parts = [f"{move} — deals {matchup.outgoing:.0%} per turn, KOs in {matchup.our_turns}"]
+    return f"{move} KOs in {matchup.our_turns}"
 
-    if matchup.outspeeds:
-        # Report what is actually taken, not the hypothetical: a pick that
-        # outspeeds and one-shots takes nothing.
-        parts.append(f"moves first, takes {matchup.incoming_over_exchange:.0%} back")
+
+def qualifier(matchup: Matchup) -> str | None:
+    """What else changes the outcome, or None when nothing does.
+
+    Each clause has to earn its place. A phrase that appears on every row is
+    not carrying information, so "outsped" shows up only where being faster is
+    what wins the exchange, and damage taken only where any is actually taken.
+    A clean sweep says nothing at all, which is itself the signal.
+    """
+    if matchup.outgoing <= 0:
+        return None
+
+    parts: list[str] = []
+    if matchup.speed_decides:
+        parts.append("outsped")
+
+    if matchup.enemy_turns == 0:
+        # They never attack. Nothing further to report.
+        pass
+    elif matchup.our_turns == 1:
+        parts.append(f"takes {matchup.incoming:.0%} first")
+    elif matchup.their_turns is None:
+        parts.append("never KOed")
     else:
-        parts.append(f"takes {matchup.incoming_over_exchange:.0%} back")
+        hits = matchup.their_turns
+        parts.append(f"survives {hits} hit" + ("s" if hits != 1 else ""))
 
-    return "; ".join(parts)
+    return ", ".join(parts) if parts else None
 
 
 def meta_of(cache: DerivedCache, row: int) -> PokemonMeta:
