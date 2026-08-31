@@ -37,13 +37,13 @@ weather, status, stat stages or switching.
 
 No tier restrictions, so legendaries dominate.
 
-What's included is fixed before the battle starts, so a matchup is a pure function;
-what's excluded needs to track previous turns, which we did not do.
+Everything modelled — stats, types, moves, speed — is known before the battle
+starts, so a matchup is a pure function of two Pokémon. Everything excluded changes
+as the battle unfolds, which would require simulating turns. We don't.
 
 ## 4. The counter-team algorithm
 
-Given N opponents, return N counters — all 1,025 candidates scored against each
-opponent in ~4 ms. One hit at level 50 is measured as follows:
+Given N opponents, return N counters. One hit at level 50 is measured as follows:
 
 ```
 base     = (22 × power × attack / defense) / 50 + 2   # 22 is the level-50 term
@@ -61,13 +61,19 @@ fraction = damage / defender HP                       # 1.0 = a one-turn KO
 4. **Never round inside the scorer.** `ceil(1 / fraction)` gives whole turns to KO,
    which collapses 1,025 candidates into a handful of buckets and ties constantly.
    Rounding is a display concern.
-5. **Keep a scorecard, one row per opponent** — the best score the team so far
-   achieves against it. Starts at zero: nothing answers it yet.
-6. **Rank each round by improvement to that scorecard**, not raw strength: 0.85
-   against an opponent already answered at 0.80 is worth 0.05; 0.60 against an
-   unanswered one is worth the full 0.60.
-7. **That update is the diversity mechanism** — a pick whose job is done scores
-   zero, so you avoid six exploits of one weakness.
+5. **Keep a scorecard: N rows, one per opponent, each holding one number** — the
+   highest score any pick so far achieves against it. Six opponents means six
+   values, all starting at zero.
+6. **Each round, rank candidates by improvement to the scorecard, not raw
+   strength.** For a candidate, take its score against each opponent, subtract what
+   the scorecard already holds, keep only the gains, and sum them. Highest total
+   wins the slot. Scoring 0.85 against an opponent already answered at 0.80 is worth
+   0.05; 0.60 against an unanswered one is worth the full 0.60.
+7. **Updating the scorecard after each pick is what forces diversity.** Once a pick
+   answers Charizard at 0.82, every remaining Charizard counter offers near-zero
+   improvement — however strong it is in isolation. Rank on raw score instead and
+   all six picks exploit whatever weakness the opposing team shares, leaving you
+   swept by anything that resists it.
 8. **Break ties deterministically:** typings the team lacks, then stat total, then
    id.
 9. **Report turn margin, not the score.** 0.84 vs 0.79 means nothing to a reader, so
