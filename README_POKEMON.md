@@ -64,11 +64,11 @@ fraction = damage / defender HP                       # 1.0 = a one-turn KO
 5. **Keep a scorecard: N rows, one per opponent, each holding one number** — the
    highest score any pick so far achieves against it. Six opponents means six
    values, all starting at zero.
-6. **Each round, rank candidates by improvement to the scorecard, not raw
-   strength.** For a candidate, take its score against each opponent, subtract what
-   the scorecard already holds, keep only the gains, and sum them. Highest total
-   wins the slot. Scoring 0.85 against an opponent already answered at 0.80 is worth
-   0.05; 0.60 against an unanswered one is worth the full 0.60.
+6. **Each round, rank candidates by improvement to the scorecard.** For a candidate,
+   take its score against each opponent, subtract what the scorecard already holds,
+   keep only the gains, and sum them. Highest total wins the slot. Scoring 0.85
+   against an opponent already answered at 0.80 is worth 0.05; 0.60 against an
+   unanswered one is worth the full 0.60.
 7. **Updating the scorecard after each pick is what forces diversity.** Once a pick
    answers Charizard at 0.82, every remaining Charizard counter offers near-zero
    improvement — however strong it is in isolation. Rank on raw score instead and
